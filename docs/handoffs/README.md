@@ -1,15 +1,6 @@
 # Active implementation handoffs
 
-Active:
-
-- [Tell people when an update is out](handoff-2026-09-26-update-notices.md)
-  — design confirmed and implemented 2026-09-26; live release, Mac download,
-  and team-space checks remain. One cached release check in
-  `rcp serve` drives an app-wide banner with a Copy command button: team
-  spaces compare the installed release, local installs compare the checkout.
-  Every release also ships an unsigned prebuilt macOS app in a companion
-  `desktop-vX.Y.Z` pre-release; source checkouts follow release tags and
-  update with one script. No Apple signing, no one-click update.
+None.
 
 Earlier on 2026-09-26 every open handoff was closed: ten had shipped their code,
 and the refusal-explains-itself handoff (a refused dispatch or Apply reported
@@ -54,3 +45,5 @@ stands in for it. Run one on disposable data, then delete its line here.
 - Pushes: the live team-space push run and real remote-machine SSH.
 - Phone UI: the real-iPhone journey and its screenshot review.
 - Runs loading: the team-server measurement of first open against the 2 s target.
+- Update notices: a `publish-desktop.yml` rerun after a failed upload; in the
+  prebuilt app, the Download button, quit and reopen, and a team connection.
