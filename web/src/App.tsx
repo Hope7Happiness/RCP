@@ -1,3 +1,5 @@
+import { UpdateNotice } from "./components/UpdateNotice";
+import { useUpdateNotice } from "./hooks/useUpdateNotice";
 import { TerminalTab } from "./components/TerminalTab";
 import { branchMergeStateLabel } from "./components/CampaignRuns";
 import {
@@ -12,7 +14,6 @@ import type { GraphEditingProps } from "./components/GraphEditingControls";
 import {
   AlertTriangle,
   ArrowLeft,
-  CircleArrowUp,
   CloudUpload,
   ChevronDown,
   ChevronUp,
@@ -80,7 +81,6 @@ import {
   returnDesktopToPersonal,
   TEAM_TRANSPORT_RECOVERED,
   type BackendIdentityEventDetail,
-  type DesktopUpdate,
 } from "./desktopRuntime";
 import {
   projectGraphMutationFailureLabel,
@@ -873,7 +873,9 @@ export default function App() {
   // same verified identity, actor, and team-session state that gates the page.
   const backendSessionReady =
     identityReady && !identityIssue && actorIdentityChecked && !teamSessionRequired;
+  const releaseUpdate = useUpdateNotice(backendSessionReady);
   const {
+    buildIdentity,
     reconnecting,
     desktopUpdate,
     updateExpanded,
@@ -3795,19 +3797,21 @@ export default function App() {
     });
   };
 
-  const updateSurface =
-    desktop && (desktopUpdate || updateError) ? (
-      <DesktopUpdateNotice
-        update={desktopUpdate}
-        activeWork={updateHasActiveWork}
-        expanded={updateExpanded}
-        applying={updateApplying}
-        error={updateError}
-        onExpand={expandUpdate}
-        onApply={() => void applyUpdate()}
-        onDismiss={dismissUpdate}
-      />
-    ) : null;
+  const updateSurface = (
+    <UpdateNotice
+      notice={releaseUpdate}
+      identity={buildIdentity}
+      desktop={desktop}
+      update={desktopUpdate}
+      activeWork={updateHasActiveWork}
+      expanded={updateExpanded}
+      applying={updateApplying}
+      error={updateError}
+      onExpand={expandUpdate}
+      onApply={() => void applyUpdate()}
+      onDismiss={dismissUpdate}
+    />
+  );
   const desktopAccessSurface = pendingDesktopProject ? (
     <div className="modal-backdrop desktop-access-backdrop">
       <section
@@ -4705,6 +4709,7 @@ export default function App() {
           )}
           {view === "settings" && (
             <ProjectSettings
+              updateNotice={releaseUpdate}
               apiBase={apiBase}
               project={project}
               identity={actorIdentity}
@@ -5169,52 +5174,4 @@ function projectSetupRouteKey(route: ProjectSetupRoute): string {
   }
   if (route.kind === "create") return `${route.kind}:${route.requestId ?? ""}`;
   return route.kind;
-}
-
-interface DesktopUpdateNoticeProps {
-  update: DesktopUpdate | null;
-  activeWork: boolean;
-  expanded: boolean;
-  applying: boolean;
-  error: string | null;
-  onExpand: () => void;
-  onApply: () => void;
-  onDismiss: () => void;
-}
-
-function DesktopUpdateNotice({
-  update,
-  activeWork,
-  expanded,
-  applying,
-  error,
-  onExpand,
-  onApply,
-  onDismiss,
-}: DesktopUpdateNoticeProps) {
-  if (update && activeWork && !expanded && !error) {
-    return (
-      <button className="desktop-update-marker" type="button" onClick={onExpand}>
-        <CircleArrowUp size={13} /> Update ready
-      </button>
-    );
-  }
-  return (
-    <div
-      className={`desktop-update-notice${error ? " error" : ""}`}
-      role={error ? "alert" : "status"}
-    >
-      <CircleArrowUp size={15} />
-      <strong>{error || `RCP ${update?.version || "update"} is ready`}</strong>
-      {update && (
-        <button className="button secondary" type="button" disabled={applying} onClick={onApply}>
-          {applying ? <LoaderCircle className="spin" size={13} /> : null}
-          {activeWork ? "Update now" : "Update"}
-        </button>
-      )}
-      <button className="desktop-update-dismiss" type="button" onClick={onDismiss}>
-        Later
-      </button>
-    </div>
-  );
 }

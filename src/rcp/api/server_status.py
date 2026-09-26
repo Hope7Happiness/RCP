@@ -8,9 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from rcp.api.dependencies import (
     ServerStatusComposition,
+    get_release_check,
     get_server_status_composition,
     get_store,
 )
+from rcp.release_check import ReleaseCheck, UpdateNotice
 from rcp.server_ops.backup import BackupArchiveReceipt
 from rcp.server_ops.doctor import ServerDoctorReport
 from rcp.storage import AppStore
@@ -79,6 +81,7 @@ class ServerExecutionReadiness(_StrictModel):
 
 class ServerStatusResponse(_StrictModel):
     overall: ServerStatusSummary
+    release_check: UpdateNotice
     releases: ServerReleaseStatus
     backup: ServerBackupStatus
     restore: ServerRestoreStatus
@@ -91,6 +94,7 @@ def server_status(
     *,
     composition: ServerStatusCompositionDependency,
     store: StoreDependency,
+    release_check: Annotated[ReleaseCheck, Depends(get_release_check)],
 ) -> ServerStatusResponse:
     if store.space_kind != "team":
         raise HTTPException(status_code=404, detail="Server status is available in a team space.")
@@ -104,6 +108,7 @@ def server_status(
             protected_backup=protected_backup,
             restored_at=restored_at,
             now=now,
+            release_check=release_check.snapshot(),
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise HTTPException(
@@ -118,20 +123,22 @@ def project_server_status(
     protected_backup: BackupArchiveReceipt | None,
     restored_at: datetime | None,
     now: datetime,
+    release_check: UpdateNotice,
 ) -> ServerStatusResponse:
     if now.utcoffset() is None:
         raise ValueError("server status clock must include a UTC offset")
     restore = _restore_status(restored_at, now)
     return ServerStatusResponse(
-        overall=_overall_status(report),
+        overall=_overall_status(report, release_check),
+        release_check=release_check,
         releases=ServerReleaseStatus(
-            status=_release_status(report),
+            status=_release_status(report, release_check),
             managed_source_commit=report.managed_main_head,
             current_release_commit=report.current_commit,
             running_commit=report.running_commit,
             upstream_commit=report.upstream_head,
             candidate_commit=report.candidate_commit,
-            update_available=report.source_state == "update_available",
+            update_available=release_check.status == "update_available",
             last_update_failure=report.update_failure,
         ),
         backup=ServerBackupStatus(
@@ -179,7 +186,7 @@ def project_server_status(
     )
 
 
-def _overall_status(report: ServerDoctorReport) -> ServerStatusSummary:
+def _overall_status(report: ServerDoctorReport, release_check: UpdateNotice) -> ServerStatusSummary:
     labels = {
         "healthy": "Server is healthy",
         "update_available": "Update is available",
@@ -194,10 +201,13 @@ def _overall_status(report: ServerDoctorReport) -> ServerStatusSummary:
         "restart_pending": "attention",
         "problems": "bad",
     }
-    return ServerStatusSummary(label=labels[report.overall_state], tone=tones[report.overall_state])
+    state = report.overall_state
+    if state in {"healthy", "update_available"}:
+        state = "update_available" if release_check.status == "update_available" else "healthy"
+    return ServerStatusSummary(label=labels[state], tone=tones[state])
 
 
-def _release_status(report: ServerDoctorReport) -> ServerStatusSummary:
+def _release_status(report: ServerDoctorReport, release_check: UpdateNotice) -> ServerStatusSummary:
     if report.update_failure is not None:
         return ServerStatusSummary(label="Last update needs attention", tone="bad")
     if report.release_state == "candidate_pending":
@@ -210,7 +220,7 @@ def _release_status(report: ServerDoctorReport) -> ServerStatusSummary:
         "unavailable",
     }:
         return ServerStatusSummary(label="Update is not ready", tone="bad")
-    if report.source_state == "update_available":
+    if release_check.status == "update_available":
         return ServerStatusSummary(label="Update is available", tone="attention")
     return ServerStatusSummary(label="Running selected release", tone="good")
 

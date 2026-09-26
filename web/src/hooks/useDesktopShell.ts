@@ -1,6 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   acceptCurrentBackendIdentity,
+  desktopBuildIdentity,
+  type DesktopBuildIdentity,
   applyDesktopUpdate,
   checkDesktopUpdate,
   DESKTOP_FOLDER_ACCESS_ACK_KEY,
@@ -21,6 +23,19 @@ interface UpdateIdentityCheck {
 }
 
 export function useDesktopShell(desktop: boolean) {
+  const [buildIdentity, setBuildIdentity] = useState<DesktopBuildIdentity | null>(null);
+  useEffect(() => {
+    if (!desktop) return;
+    let cancelled = false;
+    void desktopBuildIdentity()
+      .then((identity) => {
+        if (!cancelled) setBuildIdentity(identity);
+      })
+      .catch((error) => console.warn("Desktop build identity unavailable", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop]);
   const [reconnecting, setReconnecting] = useState(false);
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
   const [updateExpanded, setUpdateExpanded] = useState(false);
@@ -36,10 +51,7 @@ export function useDesktopShell(desktop: boolean) {
     try {
       const result = await checkDesktopUpdate();
       setDesktopUpdate(result?.available ? result : null);
-      // A source build carries no signed updater endpoint, and everyone builds
-      // from source, so `enabled: false` is the ordinary state of every
-      // supported desktop app rather than a failure worth alerting on. A build
-      // that is genuinely misconfigured fails the check and lands in `catch`.
+      // Disabled updater builds use the release notice instead.
       setUpdateError(null);
     } catch (error) {
       setUpdateError(error instanceof Error ? error.message : String(error));
@@ -145,6 +157,7 @@ export function useDesktopShell(desktop: boolean) {
   };
 
   return {
+    buildIdentity,
     reconnecting,
     desktopUpdate,
     updateExpanded,

@@ -13,11 +13,14 @@ Requirements:
 - Codex CLI or Claude Code, installed and authenticated separately if you want
   to run agent tasks.
 
-Clone and build in this order:
+Open the [latest release](https://github.com/Zhi0467/RCP/releases/latest) and
+copy its `vX.Y.Z` tag. Clone, select that release, and build in this order
+(replace `<tag>` with the copied tag):
 
 ```bash
 git clone https://github.com/Zhi0467/RCP.git
 cd RCP
+git checkout --detach refs/tags/<tag>
 npm --prefix web ci
 npm --prefix web exec playwright -- install chromium
 npm --prefix web run build
@@ -40,6 +43,38 @@ npm --prefix web ci && npm --prefix web run build
 The `web/dist present` hook in `.pre-commit-config.yaml` stops a commit with
 that instruction if you forget, because otherwise the build failure appears as a
 long traceback above the later passing hooks.
+
+## Update a source checkout
+
+Quit the desktop app with Cmd+Q and stop every backend using this checkout,
+including backends with other data directories. Commit or move any local changes
+and untracked files before updating. Copy the `vX.Y.Z` tag from the latest
+release, then run from the checkout (replace `<tag>`):
+
+```bash
+scripts/update-from-source <tag>
+```
+
+For a source-built desktop app, include the desktop build:
+
+```bash
+scripts/update-from-source <tag> --desktop
+```
+
+The script refuses a running backend or missing build tools before changing the
+checkout. It records the starting branch or commit, fetches the exact tag, checks
+it out detached, installs Web dependencies, builds `web/dist`, and runs `uv sync`.
+With `--desktop`, it also builds the development app and requires Rust and the
+Xcode command-line tools. A failed step stops the update. After a failure past
+the checkout, the script restores the recorded start by itself: it checks that
+revision out again, reinstalls Web dependencies, rebuilds `web/dist`, and runs
+`uv sync`. Only if that restore also fails does it print the remaining commands to
+run by hand. The app in `/Applications` is never replaced, and no local branch is
+reset.
+
+For the Web app, restart with `uv run rcp serve`. For the desktop app, replace
+`/Applications/RCP.app` with `web/src-tauri/target/debug/bundle/macos/RCP.app` and
+reopen it, as described below.
 
 ## Run the local Web app
 

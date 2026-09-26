@@ -1,6 +1,17 @@
 # Active implementation handoffs
 
-None. On 2026-09-26 every open handoff was closed: ten had shipped their code,
+Active:
+
+- [Tell people when an update is out](handoff-2026-09-26-update-notices.md)
+  — design confirmed and implemented 2026-09-26; live release, Mac download,
+  and team-space checks remain. One cached release check in
+  `rcp serve` drives an app-wide banner with a Copy command button: team
+  spaces compare the installed release, local installs compare the checkout.
+  Every release also ships an unsigned prebuilt macOS app in a companion
+  `desktop-vX.Y.Z` pre-release; source checkouts follow release tags and
+  update with one script. No Apple signing, no one-click update.
+
+Earlier on 2026-09-26 every open handoff was closed: ten had shipped their code,
 and the refusal-explains-itself handoff (a refused dispatch or Apply reported
 where the human clicked, with no task row) was closed unbuilt because the human
 chose not to pursue it. Git history holds their full text.

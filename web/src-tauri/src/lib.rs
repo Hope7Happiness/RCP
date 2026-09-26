@@ -71,6 +71,7 @@ pub fn run() {
             commands::desktop_status,
             commands::desktop_reconnect_backend,
             commands::desktop_show_ready,
+            commands::desktop_build_identity,
             commands::desktop_list_team_connections,
             commands::desktop_configure_server_operator_route,
             commands::desktop_probe_server_operator,
@@ -126,7 +127,10 @@ pub fn run() {
                 )
                 .into());
             }
-            let team_sessions = team_session::TeamSessionState::new(&local_https);
+            let team_sessions = team_session::TeamSessionState::new(
+                &local_https,
+                app.state::<BackendState>().inner().clone(),
+            );
             if !app.manage(team_sessions) {
                 return Err(std::io::Error::other(
                     "RCP desktop team session state was already registered",

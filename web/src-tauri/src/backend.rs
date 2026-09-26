@@ -947,6 +947,20 @@ fn dev_bundle_settings() -> Result<Option<DevBundleSettings>, String> {
     }
 }
 
+pub(crate) fn desktop_build_kind() -> &'static str {
+    match option_env!("RCP_DESKTOP_BUILD_KIND") {
+        Some("prebuilt") => "prebuilt",
+        _ => "source",
+    }
+}
+
+pub(crate) fn source_checkout() -> Result<PathBuf, String> {
+    match dev_bundle_settings()? {
+        Some(settings) => canonical_directory(&settings.checkout, "RCPDevCheckout in Info.plist"),
+        None => dev_checkout(),
+    }
+}
+
 fn dev_checkout() -> Result<PathBuf, String> {
     if let Some(path) = env::var_os("RCP_DEV_CHECKOUT") {
         return canonical_directory(Path::new(&path), "RCP_DEV_CHECKOUT");

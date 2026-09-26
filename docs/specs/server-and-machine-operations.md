@@ -116,6 +116,22 @@ These identities and credentials must never be collapsed:
 - the provider login belongs to the operating-system account that actually runs
   that provider, locally or through SSH.
 
+### Release check and update notices
+
+`rcp serve` owns one release-check poller in its lifespan (`release_check.py`).
+Shortly after startup and every 6 hours it reads GitHub's latest published
+stable `vX.Y.Z` release with bounded, GitHub-only transport; whenever that
+release is newer it also confirms the `desktop-vX.Y.Z` companion (published,
+same commit, zip and checksum uploaded). Routes read only the cache. A team
+space compares the installed release from the selected receipt, reports
+`pinned` for a pinned server, and never lets a failed check change the doctor's
+install-integrity `source_state`; `rcp server doctor` makes one live lookup of
+its own. `RCP_UPDATE_CHECK=off` disables every call. Requests carry no project
+data, credentials, or install identifier. A source `rcp serve` holds a shared
+lock on `<checkout>/.rcp-serve.lock`, which `scripts/update-from-source` takes
+exclusively before it checks out a release and rebuilds, restoring the start
+revision and its build if a step fails.
+
 ## Machine authority and the operator surface
 
 RCP defines no administrator member role. Installation, backup, restore, release

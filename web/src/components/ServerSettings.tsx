@@ -1,3 +1,5 @@
+import { ReleaseCheckRow } from "./UpdateNotice";
+import type { UpdateNotice } from "../types";
 import {
   ArchiveRestore,
   DatabaseBackup,
@@ -12,6 +14,7 @@ import { loadServerStatus } from "../api";
 import type { ServerStatus, ServerStatusSummary } from "../types";
 
 interface Props {
+  updateNotice?: UpdateNotice | null;
   loadStatus?: () => Promise<ServerStatus>;
 }
 
@@ -61,7 +64,7 @@ function CommitRow({ label, commit }: { label: string; commit: string | null }) 
   );
 }
 
-export function ServerSettings({ loadStatus = loadServerStatus }: Props) {
+export function ServerSettings({ loadStatus = loadServerStatus, updateNotice = null }: Props) {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +104,8 @@ export function ServerSettings({ loadStatus = loadServerStatus }: Props) {
           <RefreshCw className={loading ? "spin" : undefined} size={15} />
         </button>
       </header>
+
+      <ReleaseCheckRow notice={updateNotice} label="Release check" />
 
       {error ? (
         <div className="server-settings-error" role="alert">

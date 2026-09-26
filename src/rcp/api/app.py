@@ -70,6 +70,7 @@ from rcp.api.task_requests import _resolved_graph_request, resolved_agent_surfac
 from rcp.api.tasks import router as tasks_router
 from rcp.api.team import router as team_router
 from rcp.api.terminals import router as terminals_router
+from rcp.api.update_notice import router as update_notice_router
 from rcp.api.watchers import router as watchers_router
 from rcp.attachments import ChatAttachmentStore
 from rcp.background import (
@@ -78,6 +79,7 @@ from rcp.background import (
     BackgroundAgentTasks,
     StartupEffectFence,
 )
+from rcp.build_identity import build_identity
 from rcp.compute_jobs.probe import probe_compute_backend, refresh_compute_probes
 from rcp.compute_jobs.reconcile import reconcile_compute_jobs
 from rcp.config import load_manifest
@@ -93,6 +95,7 @@ from rcp.limits import (
 from rcp.projects import ProjectCatalog, ProjectDisplayCache
 from rcp.provider_skills import ProviderSkillInventoryManager
 from rcp.providers import configured_runtime_id
+from rcp.release_check import ReleaseCheck
 from rcp.runs.auto_research import (
     AutoResearchCommandContext,
     AutoResearchCommandDispatcher,
@@ -160,7 +163,11 @@ from rcp.server_ops.control import (
     ServerControlRequest,
     ServerControlServer,
 )
-from rcp.server_ops.doctor import LinuxServerDoctorMachine, ServerDoctorReport
+from rcp.server_ops.doctor import (
+    LinuxServerDoctorMachine,
+    ServerDoctorReport,
+    read_installed_release_identity,
+)
 from rcp.server_ops.layout import DEFAULT_SERVER_LAYOUT, ServerLayout
 from rcp.server_ops.maintenance import (
     MaintenanceAdmissionClosed,
@@ -179,6 +186,7 @@ from rcp.service import (
     RunRequest,
 )
 from rcp.setup import ProjectSetupManager
+from rcp.source_checkout import source_checkout_root
 from rcp.sources import (
     REMOTE_SOURCE_CACHE_LIMITS,
     SESSION_SLICE_CACHE_LIMITS,
@@ -1318,6 +1326,17 @@ def create_app(
                 expected_uid=os.geteuid(),
             )
 
+    current_version = build_identity().base_version
+    pinned = False
+    if space_kind == "team":
+        current_version, pinned = read_installed_release_identity(server_layout)
+    release_check = ReleaseCheck(
+        space_kind,
+        current_version,
+        pinned=pinned,
+        source_checkout=source_checkout_root() is not None,
+    )
+
     server_status_composition = ServerStatusComposition(
         doctor_reader=server_doctor_reader,
         protected_backup_reader=server_protected_backup_reader,
@@ -1352,6 +1371,7 @@ def create_app(
         experiment_admission=experiment_admission,
         health_composition=health_composition,
         server_status_composition=server_status_composition,
+        release_check=release_check,
         provider_credentials=provider_credentials,
         provider_sign_ins=provider_sign_ins,
         episode_reconciliation=reconcile_episodes,
@@ -1655,6 +1675,7 @@ def create_app(
                 if control_server is not None and not control_started:
                     control_server.start()
                     control_started = True
+                release_check.start()
                 runtime_started = True
                 app.state.startup_effect_runtime_started = True
                 startup_effect_runtime_event.set()
@@ -1721,6 +1742,7 @@ def create_app(
                 await terminals.close()
             except Exception:
                 logger.exception("Terminal shutdown cleanup failed; startup will retry it.")
+            await asyncio.to_thread(release_check.stop)
             watcher_poller.stop()
             graph_watcher_retry_worker.stop()
             background_tasks.shutdown()
@@ -1953,6 +1975,7 @@ def create_app(
     app.include_router(provider_login_router)
     app.include_router(health_router)
     app.include_router(server_status_router)
+    app.include_router(update_notice_router)
     app.include_router(team_router)
     app.include_router(index_router)
     app.include_router(index_membership_router)

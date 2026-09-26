@@ -21,6 +21,12 @@ export const BACKEND_IDENTITY_EVENT = "rcp:backend-identity";
 export const DESKTOP_FOLDER_ACCESS_ACK_KEY = "rcp:desktop-folder-access-acknowledgement";
 export const DESKTOP_FOLDER_ACCESS_ACK_VERSION = 1;
 
+export interface DesktopBuildIdentity {
+  kind: "prebuilt" | "source";
+  version: string;
+  checkout: string | null;
+}
+
 export interface DesktopStatus {
   desktop: boolean;
   version: string;
@@ -263,6 +269,11 @@ async function reconnectTeamUntilVerified(wait: (ms: number) => Promise<void>): 
     await wait(delay);
     delay = Math.min(delay * 2, TEAM_TRANSPORT_RETRY_MAX_MS);
   }
+}
+
+export async function desktopBuildIdentity(): Promise<DesktopBuildIdentity | null> {
+  if (!isDesktopRuntime()) return null;
+  return invokeDesktop<DesktopBuildIdentity>("desktop_build_identity");
 }
 
 export async function desktopStatus(): Promise<DesktopStatus | null> {

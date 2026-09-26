@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+export RCP_DESKTOP_BUILD_KIND=prebuilt
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd)
 

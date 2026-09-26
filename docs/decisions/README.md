@@ -1,5 +1,11 @@
 # Active decision records
 
+- [Desktop installs follow releases](2026-09-26-desktop-installs-follow-releases.md)
+  records why desktop and local Web installs follow promoted releases like
+  team servers, why each release ships an unsigned prebuilt app in a companion
+  pre-release, why RCP skips Apple signing, and why updates are notified
+  rather than applied.
+
 - [Job managers add rules, never remove the helper](2026-09-25-job-managers-add-rules-never-remove-the-helper.md)
   records why the launch helper stays offered on machines set to Slurm, and
   why each job manager adds its own instructions instead of replacing it.

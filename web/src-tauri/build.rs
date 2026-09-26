@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "desktop_status",
     "desktop_reconnect_backend",
     "desktop_show_ready",
+    "desktop_build_identity",
     "desktop_list_team_connections",
     "desktop_configure_server_operator_route",
     "desktop_probe_server_operator",

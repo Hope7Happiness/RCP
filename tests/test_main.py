@@ -692,3 +692,30 @@ def test_open_existing_server_marks_an_unhealthy_lock_owner_unavailable(monkeypa
 
     with pytest.raises(ExistingServerUnavailable):
         _open_existing_server("127.0.0.1", 8421, None)
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_serve_holds_checkout_lock_through_shutdown(tmp_path, monkeypatch, reload) -> None:
+    import fcntl
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setattr("rcp.source_checkout.source_checkout_root", lambda: checkout)
+    phases = []
+
+    def assert_locked(*_args, **_kwargs):
+        with (
+            (checkout / ".rcp-serve.lock").open("a") as updater,
+            pytest.raises(BlockingIOError),
+        ):
+            fcntl.flock(updater, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        phases.append(True)
+
+    monkeypatch.setattr("rcp.__main__._run_server", assert_locked)
+    monkeypatch.setattr("rcp.__main__._drain_worker_threads", assert_locked)
+    data = tmp_path / "data"
+    data.mkdir()
+    _serve_as_owner(_serve_args(port=0, reload=reload), data)
+    assert len(phases) == 2
+    with (checkout / ".rcp-serve.lock").open("a") as updater:
+        fcntl.flock(updater, fcntl.LOCK_EX | fcntl.LOCK_NB)

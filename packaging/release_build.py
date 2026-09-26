@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import sys
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,37 @@ def stamp_version(run_number: str, sha: str, *, version_file: Path | None = None
     except OSError as exc:
         raise ReleaseBuildError(f"could not write {path}: {exc}") from exc
     return stamped
+
+
+def desktop_versions(project_root: Path | None = None) -> dict[str, str]:
+    """Read the four native version fields that must equal the Python version."""
+    web = (project_root or PROJECT_ROOT) / "web"
+    try:
+        package = json.loads((web / "package.json").read_text(encoding="utf-8"))
+        lock = json.loads((web / "package-lock.json").read_text(encoding="utf-8"))
+        cargo = tomllib.loads((web / "src-tauri/Cargo.toml").read_text(encoding="utf-8"))
+        cargo_lock = tomllib.loads((web / "src-tauri/Cargo.lock").read_text(encoding="utf-8"))
+        locked = [p["version"] for p in cargo_lock["package"] if p["name"] == "rcp-desktop"]
+        if len(locked) != 1:
+            raise ValueError("expected exactly one rcp-desktop package in Cargo.lock")
+        return {
+            "web/package.json": package["version"],
+            "web/package-lock.json": lock["version"],
+            'web/package-lock.json packages[""]': lock["packages"][""]["version"],
+            "web/src-tauri/Cargo.toml": cargo["package"]["version"],
+            "web/src-tauri/Cargo.lock": locked[0],
+        }
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ReleaseBuildError(f"could not read desktop versions: {exc}") from exc
+
+
+def check_desktop_version(version: str, *, project_root: Path | None = None) -> None:
+    mismatched = {
+        field: found for field, found in desktop_versions(project_root).items() if found != version
+    }
+    if mismatched:
+        detail = ", ".join(f"{field}={found}" for field, found in sorted(mismatched.items()))
+        raise ReleaseBuildError(f"desktop versions differ from {version}: {detail}")
 
 
 def _resolved_file(directory: Path, value: Path) -> Path:
@@ -238,6 +270,9 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
     stamp.add_argument("--run-number", required=True)
     stamp.add_argument("--sha", required=True)
 
+    desktop = subparsers.add_parser("check-desktop-version")
+    desktop.add_argument("version")
+
     write = subparsers.add_parser("write-manifest")
     write.add_argument("directory", type=Path)
     write.add_argument("--output", type=Path, required=True)
@@ -266,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
         arguments = _arguments(argv)
         if arguments.command == "stamp-version":
             print(stamp_version(arguments.run_number, arguments.sha))
+        elif arguments.command == "check-desktop-version":
+            check_desktop_version(arguments.version)
         elif arguments.command == "write-manifest":
             write_manifest(arguments.directory, arguments.output)
         elif arguments.command == "verify-manifest":

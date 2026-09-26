@@ -216,6 +216,27 @@ fn select_resource_target(
     Err("the displayed desktop origin has no verified RCP session".into())
 }
 
+#[derive(Serialize)]
+pub struct DesktopBuildIdentity {
+    kind: &'static str,
+    version: &'static str,
+    checkout: Option<PathBuf>,
+}
+
+#[tauri::command]
+pub fn desktop_build_identity() -> Result<DesktopBuildIdentity, String> {
+    let kind = backend::desktop_build_kind();
+    Ok(DesktopBuildIdentity {
+        kind,
+        version: env!("CARGO_PKG_VERSION"),
+        checkout: if kind == "source" {
+            Some(backend::source_checkout()?)
+        } else {
+            None
+        },
+    })
+}
+
 #[tauri::command]
 pub fn desktop_list_team_connections(
     state: State<'_, TeamConnectionState>,
@@ -1316,6 +1337,22 @@ mod tests {
                 },
             },
             connection,
+        }
+    }
+
+    #[test]
+    fn desktop_identity_reports_native_version_and_source_checkout() {
+        let identity = serde_json::to_value(desktop_build_identity().unwrap()).unwrap();
+        assert_eq!(identity["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(identity["kind"], backend::desktop_build_kind());
+        if backend::desktop_build_kind() == "prebuilt" {
+            assert!(identity["checkout"].is_null());
+        } else {
+            assert_eq!(
+                identity["checkout"],
+                backend::source_checkout().unwrap().to_str().unwrap()
+            );
+            assert!(Path::new(identity["checkout"].as_str().unwrap()).is_absolute());
         }
     }
 

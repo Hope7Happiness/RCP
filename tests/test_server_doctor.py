@@ -128,7 +128,7 @@ def test_doctor_renders_one_complete_report_through_both_cli_modes() -> None:
     assert [event["event"] for event in events] == ["plan", "step", "step"]
     assert events[-1]["step"]["state"] == "succeeded"
     fields = {item["name"]: item["value"] for item in events[-1]["step"]["fields"]}
-    assert len(fields) == 51
+    assert len(fields) == 53
     assert fields["overall_state"] == "healthy"
     assert fields["configured_authentication"] == "public"
     assert fields["candidate_commit"] == "none"
@@ -814,3 +814,55 @@ def test_provider_login_summary_reads_the_durable_state_read_only(tmp_path: Path
         f"codex@local=signed_out(turn,{failed.changed_at})"
     )
     assert "xxxx" not in summary
+
+
+@pytest.mark.parametrize("pin", [None, "v0.3.2"])
+@pytest.mark.parametrize("valid", [False, True])
+def test_shared_selected_identity_uses_receipt_validation(tmp_path, monkeypatch, pin, valid):
+    layout = _layout(tmp_path)
+    _prepare_layout(layout, uid=os.getuid(), gid=os.getgid())
+    _prepare_release(layout, COMMIT)
+    document = json.loads(layout.selected_release_receipt.read_text())
+    if not valid:
+        document["version_string"] = "0.4.0"
+    monkeypatch.setattr(server_doctor, "_read_root_document", lambda _path, **_kwargs: document)
+    monkeypatch.setattr(
+        server_doctor,
+        "load_installed_server_config",
+        lambda _path: SimpleNamespace(release=ServerReleaseConfig(pin=pin)),
+    )
+    assert server_doctor.read_installed_release_identity(layout) == (
+        "0.3.2" if valid else None,
+        pin is not None,
+    )
+    problems = []
+    machine = LinuxServerDoctorMachine(layout)
+    _, _, state = machine._inspect_source(
+        None, service_uid=os.getuid(), service_gid=os.getgid(), add_problem=problems.append
+    )
+    assert state == ("aligned" if valid else "unavailable")
+
+
+def test_cli_doctor_release_failure_is_separate_from_source_health(monkeypatch):
+    from rcp.release_check import ReleaseCheck
+
+    calls = []
+
+    def failed_check(self, *, companion):
+        calls.append(companion)
+
+    monkeypatch.setattr(ReleaseCheck, "check", failed_check)
+    monkeypatch.setattr(
+        ReleaseCheck,
+        "snapshot",
+        lambda self: SimpleNamespace(status="failed", latest_version=None),
+    )
+    code, output, _ = _run_doctor(_report(), machine_readable=True)
+    fields = {
+        field["name"]: field["value"]
+        for field in json.loads(output.splitlines()[-1])["step"]["fields"]
+    }
+    assert calls == [False]
+    assert code == 0
+    assert fields["source_state"] == "aligned"
+    assert fields["release_check_status"] == "failed"

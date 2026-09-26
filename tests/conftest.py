@@ -193,3 +193,9 @@ default_reasoning = "medium"
         encoding="utf-8",
     )
     return load_manifest(path)
+
+
+@pytest.fixture(autouse=True)
+def disabled_release_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test apps never contact GitHub; transport tests opt in against loopback."""
+    monkeypatch.setenv("RCP_UPDATE_CHECK", "off")

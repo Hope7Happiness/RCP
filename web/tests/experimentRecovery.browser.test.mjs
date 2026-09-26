@@ -275,6 +275,19 @@ for (const scenario of ["retry", "resume", "switch provider"]) {
         else if (path.endsWith("/revision"))
           json = { revision: 1, graph_head: project().graph_head };
         else if (path === "/api/providers/logins") json = [];
+        else if (path === "/api/update-notice")
+          json = {
+            space: "personal",
+            status: "current",
+            current_version: "0.4.2",
+            latest_version: "0.4.2",
+            checked_at: null,
+            last_success_at: null,
+            companion_ready: false,
+            download_url: null,
+            source_checkout: true,
+            update_command: null,
+          };
         else if (path.endsWith("/timeline"))
           json = timelineFixture(episode().episode_id, episode().mode);
         else if (

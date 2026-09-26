@@ -12,7 +12,8 @@ Run it alone on a Mac, or share one team space with your lab on a Linux server.
 - **Agents:** Codex and Claude Code. More to come.
 - **Platforms:** macOS 13+ on Apple Silicon for the desktop app; Ubuntu 22.04
   or 24.04 LTS on x86-64 for the web app and team server.
-- **Install:** from source, with the steps below. No binaries yet.
+- **Install:** the unsigned macOS app from the releases page, or from source
+  with the steps below. RCP shows a notice when a newer release is out.
 
 ## Set up with your agent
 
@@ -53,12 +54,20 @@ access, then send:
 
 ## Install and run
 
-You need Git, Node.js, [`uv`](https://docs.astral.sh/uv/), and Codex CLI or
+**macOS app.** From each release on, the
+[releases page](https://github.com/Zhi0467/RCP/releases) has a
+`desktop-vX.Y.Z` pre-release with `RCP-vX.Y.Z-macos-arm64.zip`. Unzip it and
+move `RCP.app` to Applications. The app is not signed by Apple, so macOS blocks
+the first launch: open System Settings → Privacy & Security and choose
+**Open Anyway**. A manually downloaded update may ask again.
+
+**From source.** You need Git, Node.js, [`uv`](https://docs.astral.sh/uv/), and Codex CLI or
 Claude Code signed in. Build the web app and run it in your browser:
 
 ```bash
 git clone https://github.com/Zhi0467/RCP.git
 cd RCP
+git checkout --detach <tag>   # the vX.Y.Z tag of the latest release
 npm --prefix web ci && npm --prefix web run build
 uv sync
 uv run rcp open
@@ -72,8 +81,8 @@ npm --prefix web run desktop:build-dev
 open web/src-tauri/target/debug/bundle/macos/RCP.app
 ```
 
-Development runs, verification, and updating an installed copy are in
-[docs/install.md](docs/install.md).
+Development runs, verification, and updating a source checkout with
+`scripts/update-from-source` are in [docs/install.md](docs/install.md).
 
 A shared team space on your own Ubuntu server is set up through the
 [team server guide](docs/server.md). Design and behavior live in

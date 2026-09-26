@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,35 @@ SPEC = importlib.util.spec_from_file_location("release_build", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 release_build = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release_build)
+
+
+@pytest.fixture
+def desktop_copy(tmp_path: Path) -> Path:
+    for name in (
+        "package.json",
+        "package-lock.json",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+    ):
+        destination = tmp_path / "web" / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(SCRIPT.parent.parent / "web" / name, destination)
+    return tmp_path
+
+
+def test_desktop_versions_match_the_python_version() -> None:
+    namespace: dict[str, str] = {}
+    exec((SCRIPT.parent.parent / "src/rcp/__init__.py").read_text(), namespace)
+    release_build.check_desktop_version(namespace["__version__"])
+
+
+def test_check_desktop_version_rejects_one_stale_field(desktop_copy: Path) -> None:
+    version = release_build.desktop_versions(desktop_copy)["web/package.json"]
+    release_build.check_desktop_version(version, project_root=desktop_copy)
+    cargo = desktop_copy / "web/src-tauri/Cargo.toml"
+    cargo.write_text(cargo.read_text().replace(f'version = "{version}"', 'version = "0.0.1"', 1))
+    with pytest.raises(release_build.ReleaseBuildError):
+        release_build.check_desktop_version(version, project_root=desktop_copy)
 
 
 def test_stamp_version_stamps_plain_version(tmp_path: Path) -> None:

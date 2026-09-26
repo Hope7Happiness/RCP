@@ -12,6 +12,7 @@
     "allow-desktop-status",
     "allow-desktop-reconnect-backend",
     "allow-desktop-show-ready",
+    "allow-desktop-build-identity",
     "allow-desktop-list-team-connections",
     "allow-desktop-configure-server-operator-route",
     "allow-desktop-probe-server-operator",

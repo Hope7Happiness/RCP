@@ -50,6 +50,18 @@
 .desktop-update-dismiss:hover {
   color: var(--ink);
 }
+.release-update-notice {
+  flex-wrap: wrap;
+}
+.release-update-notice code {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.release-check-row {
+  padding: 12px;
+  margin: 0;
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }

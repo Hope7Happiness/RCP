@@ -1,0 +1,137 @@
+name: Publish desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag in vX.Y.Z form
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-desktop-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish unsigned desktop companion
+    # Runs after the server release is published, so a failure here leaves it
+    # unchanged. A failed companion remains a draft and can be retried.
+    permissions:
+      contents: write
+    runs-on: macos-15
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Read the promoted release identity
+        id: release
+        shell: bash
+        run: |
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "invalid release tag $RELEASE_TAG"
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/promoted-release.json"
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          release = json.loads((Path(os.environ["RUNNER_TEMP"]) / "promoted-release.json").read_text())
+          commit = release["target_commitish"]
+          if (release["draft"] or release["prerelease"]
+              or release["tag_name"] != os.environ["RELEASE_TAG"]
+              or not re.fullmatch(r"[0-9a-f]{40}", commit)):
+              raise SystemExit("expected a published stable release with an exact commit")
+          promotion = re.fullmatch(r"Promoted build ([0-9]+) from commit ([0-9a-f]{40})\.", release["body"].strip())
+          if not promotion or promotion[2] != commit:
+              raise SystemExit("release has no matching promoted build receipt")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"commit={commit}\n")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"TARGET_COMMIT={commit}\nBUILD_NUMBER={promotion[1]}\n")
+          PY
+
+      - name: Refuse a published companion and remove an existing draft
+        shell: bash
+        run: |
+          # Listing also sees drafts; an API failure must not look like absence.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | {id, tag_name, draft} | @json' > "$RUNNER_TEMP/releases.jsonl"
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/desktop-$RELEASE_TAG" > "$RUNNER_TEMP/companion-refs.json"
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          tag = "desktop-" + os.environ["RELEASE_TAG"]
+          releases = [json.loads(line) for line in (Path(os.environ["RUNNER_TEMP"]) / "releases.jsonl").read_text().splitlines()]
+          refs = json.loads((Path(os.environ["RUNNER_TEMP"]) / "companion-refs.json").read_text())
+          for ref in refs:
+              if ref["ref"] == f"refs/tags/{tag}" and ref["object"]["sha"] != os.environ["TARGET_COMMIT"]:
+                  raise SystemExit("existing companion tag points at a different commit")
+          matches = [release for release in releases if release["tag_name"] == tag]
+          if any(not release["draft"] for release in matches):
+              raise SystemExit(f"published companion {tag} already exists")
+          for release in matches:
+              subprocess.run(["gh", "api", "--method", "DELETE", f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/{release['id']}"], check=True)
+          PY
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check the desktop version and stamp the Python build
+        run: |
+          uv run --no-project python packaging/release_build.py check-desktop-version "${RELEASE_TAG#v}"
+          uv run --no-project python packaging/release_build.py stamp-version \
+            --run-number "$BUILD_NUMBER" --sha "$TARGET_COMMIT"
+      - run: npm --prefix web ci
+      - run: npm --prefix web run desktop:build
+      - name: Smoke-test the bundled backend
+        run: uv run python packaging/smoke-backend.py web/src-tauri/target/release/bundle/macos/RCP.app/Contents/MacOS/rcp-backend
+      - name: Archive the app with macOS metadata
+        run: |
+          mkdir desktop-assets
+          ditto -c -k --sequesterRsrc --keepParent \
+            web/src-tauri/target/release/bundle/macos/RCP.app \
+            "desktop-assets/RCP-$RELEASE_TAG-macos-arm64.zip"
+          cd desktop-assets
+          shasum -a 256 "RCP-$RELEASE_TAG-macos-arm64.zip" > "RCP-$RELEASE_TAG-macos-arm64.zip.sha256"
+      - name: Upload a draft companion
+        run: |
+          gh release create "desktop-$RELEASE_TAG" desktop-assets/* \
+            --draft --prerelease --latest=false \
+            --target "$TARGET_COMMIT" \
+            --title "RCP $RELEASE_TAG for Apple Silicon" \
+            --notes "Unsigned macOS app for $RELEASE_TAG. Approve the first launch in System Settings > Privacy & Security > Open Anyway. Updates are manual."
+      - name: Verify the uploaded bytes
+        run: |
+          mkdir downloaded-assets
+          gh release download "desktop-$RELEASE_TAG" --dir downloaded-assets
+          cmp "desktop-assets/RCP-$RELEASE_TAG-macos-arm64.zip.sha256" \
+            "downloaded-assets/RCP-$RELEASE_TAG-macos-arm64.zip.sha256"
+          cd downloaded-assets
+          shasum -a 256 -c "RCP-$RELEASE_TAG-macos-arm64.zip.sha256"
+      - name: Publish the verified companion
+        run: gh release edit "desktop-$RELEASE_TAG" --draft=false --prerelease --latest=false
+      - name: Report a desktop failure
+        if: failure()
+        run: echo "Desktop publication failed; the server release is unchanged. Retry this workflow with the same tag." >> "$GITHUB_STEP_SUMMARY"

@@ -18,6 +18,7 @@ from typing import BinaryIO, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from rcp.limits import SERVER_INSTALL_PROBE_TIMEOUT_SECONDS, SERVER_SUPERVISOR_PROJECTION_MAX_BYTES
+from rcp.release_check import ReleaseCheck, ReleaseStatus
 from rcp.server_ops.cli import CallerIdentity, PreparedServerCommand, ServerEventEmitter
 from rcp.server_ops.config import (
     InstalledServerConfig,
@@ -154,6 +155,8 @@ class ServerDoctorReport(_StrictModel):
     update_candidate_commit: str | None = None
     update_restored_commit: str | None = None
     update_failure: str | None = None
+    release_check_status: ReleaseStatus = "unchecked"
+    latest_release_version: str | None = None
 
     @field_validator(
         "managed_main_head",
@@ -209,6 +212,10 @@ class ServerDoctorReport(_StrictModel):
     def fields(self) -> tuple[NonsecretField, ...]:
         return (
             NonsecretField(name="overall_state", value=self.overall_state),
+            NonsecretField(name="release_check_status", value=self.release_check_status),
+            NonsecretField(
+                name="latest_release_version", value=_shown(self.latest_release_version)
+            ),
             NonsecretField(name="followed_release", value=self.followed_release),
             NonsecretField(name="release_pin", value=_shown(self.release_pin)),
             NonsecretField(name="team_access_url", value=_shown(self.team_access_url)),
@@ -374,6 +381,23 @@ def prepare_doctor_command(
             )
         )
         report = resolved_machine.inspect()
+        release_check = ReleaseCheck(
+            space="team",
+            current_version=(
+                report.selected_release_tag.removeprefix("v")
+                if report.selected_release_tag is not None
+                else None
+            ),
+            pinned=report.release_pin is not None,
+        )
+        release_check.check(companion=False)
+        notice = release_check.snapshot()
+        report = report.model_copy(
+            update={
+                "release_check_status": notice.status,
+                "latest_release_version": notice.latest_version,
+            }
+        )
         succeeded = report.overall_state != "problems"
         emitter.emit_step(
             pending.model_copy(
@@ -645,40 +669,7 @@ class LinuxServerDoctorMachine:
             return _DoctorUpdateSummary(state="unavailable")
 
     def _read_root_document(self, path: Path) -> dict:
-        for parent in reversed(path.parents):
-            info = parent.lstat()
-            if (
-                not stat.S_ISDIR(info.st_mode)
-                or info.st_uid != self._root_identity[0]
-                or info.st_mode & 0o022
-            ):
-                raise ValueError("unsafe supervisor ancestry")
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(descriptor, "rb") as source:
-            info = os.fstat(source.fileno())
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != self._root_identity[0]
-                or info.st_mode & 0o022
-                or info.st_nlink != 1
-            ):
-                raise ValueError("unsafe supervisor projection")
-            content = source.read(SERVER_SUPERVISOR_PROJECTION_MAX_BYTES + 1)
-        if len(content) > SERVER_SUPERVISOR_PROJECTION_MAX_BYTES:
-            raise ValueError("supervisor projection exceeds bound")
-
-        def unique(pairs):
-            result = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError("duplicate projection field")
-                result[key] = value
-            return result
-
-        document = json.loads(content, object_pairs_hook=unique)
-        if not isinstance(document, dict):
-            raise ValueError("invalid supervisor projection")
-        return document
+        return _read_root_document(path, expected_uid=self._root_identity[0])
 
     def _resolve_service_identity(
         self,
@@ -829,42 +820,7 @@ class LinuxServerDoctorMachine:
         self._selected = None
         try:
             selected = self._read_root_document(self.layout.selected_release_receipt)
-            required = {
-                "version",
-                "release_tag",
-                "version_string",
-                "build",
-                "commit",
-                "manifest_sha256",
-                "release_directory",
-                "supervisor_version",
-            }
-            if (
-                selected.keys() != required
-                or type(selected["version"]) is not int
-                or selected["version"] != 1
-                or type(selected["build"]) is not int
-                or selected["build"] < 1
-            ):
-                raise ValueError("invalid selected receipt")
-            for key, pattern in (
-                ("commit", r"[0-9a-f]{40}"),
-                ("manifest_sha256", r"[0-9a-f]{64}"),
-                ("release_tag", r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"),
-                ("supervisor_version", r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"),
-            ):
-                if (
-                    not isinstance(selected[key], str)
-                    or re.fullmatch(pattern, selected[key]) is None
-                ):
-                    raise ValueError("invalid selected identity")
-            if (
-                selected["version_string"]
-                != f"{selected['release_tag'][1:]}+build.{selected['build']}.g{selected['commit'][:7]}"
-                or selected["release_directory"]
-                != str(self.layout.releases_root / str(selected["build"]))
-            ):
-                raise ValueError("mismatched selected identity")
+            _validate_selected_receipt(selected, self.layout)
             self._selected = selected
             return selected["commit"], selected["commit"], "aligned"
         except (OSError, ValueError):
@@ -1189,6 +1145,91 @@ class LinuxServerDoctorMachine:
         if not lines or len(lines[-1]) > 240:
             return None
         return lines[-1]
+
+
+def _read_root_document(path: Path, *, expected_uid: int = 0) -> dict:
+    for parent in reversed(path.parents):
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o022:
+            raise ValueError("unsafe supervisor ancestry")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as source:
+        info = os.fstat(source.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != expected_uid
+            or info.st_mode & 0o022
+            or info.st_nlink != 1
+        ):
+            raise ValueError("unsafe supervisor projection")
+        content = source.read(SERVER_SUPERVISOR_PROJECTION_MAX_BYTES + 1)
+    if len(content) > SERVER_SUPERVISOR_PROJECTION_MAX_BYTES:
+        raise ValueError("supervisor projection exceeds bound")
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate projection field")
+            result[key] = value
+        return result
+
+    document = json.loads(content, object_pairs_hook=unique)
+    if not isinstance(document, dict):
+        raise ValueError("invalid supervisor projection")
+    return document
+
+
+def _validate_selected_receipt(selected: dict, layout: ServerLayout) -> None:
+    required = {
+        "version",
+        "release_tag",
+        "version_string",
+        "build",
+        "commit",
+        "manifest_sha256",
+        "release_directory",
+        "supervisor_version",
+    }
+    if (
+        selected.keys() != required
+        or type(selected["version"]) is not int
+        or selected["version"] != 1
+        or type(selected["build"]) is not int
+        or selected["build"] < 1
+    ):
+        raise ValueError("invalid selected receipt")
+    for key, pattern in (
+        ("commit", r"[0-9a-f]{40}"),
+        ("manifest_sha256", r"[0-9a-f]{64}"),
+        ("release_tag", r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"),
+        ("supervisor_version", r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"),
+    ):
+        if not isinstance(selected[key], str) or re.fullmatch(pattern, selected[key]) is None:
+            raise ValueError("invalid selected identity")
+    if (
+        selected["version_string"]
+        != f"{selected['release_tag'][1:]}+build.{selected['build']}.g{selected['commit'][:7]}"
+        or selected["release_directory"] != str(layout.releases_root / str(selected["build"]))
+    ):
+        raise ValueError("mismatched selected identity")
+
+
+def read_installed_release_identity(
+    layout: ServerLayout = DEFAULT_SERVER_LAYOUT,
+) -> tuple[str | None, bool]:
+    """Read only the selected identity and pin, without running machine probes."""
+    try:
+        config = load_installed_server_config(layout.config_path)
+    except (OSError, ValueError):
+        config = None
+    pinned = config is not None and config.release.pin is not None
+    try:
+        selected = _read_root_document(layout.selected_release_receipt)
+        _validate_selected_receipt(selected, layout)
+    except (OSError, ValueError):
+        return None, pinned
+    return selected["release_tag"][1:], pinned
 
 
 def _member_removal_problems(

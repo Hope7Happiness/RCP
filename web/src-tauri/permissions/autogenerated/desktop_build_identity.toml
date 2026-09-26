@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-build-identity"
+description = "Enables the desktop_build_identity command without any pre-configured scope."
+commands.allow = ["desktop_build_identity"]
+
+[[permission]]
+identifier = "deny-desktop-build-identity"
+description = "Denies the desktop_build_identity command without any pre-configured scope."
+commands.deny = ["desktop_build_identity"]

@@ -487,9 +487,11 @@ alias before opening its upstream, so a shared wildcard leaf never routes one
 team's host-bound cookie to another team's server.
 The tool ACL solves source-rebuild stability; because a same-UID process can
 invoke the same general-purpose Apple tool, it is not same-account read
-isolation. That limitation is accepted only under the current cooperative
-provider model and must be replaced by app-bound credential access for wider
-public distribution. Team tokens use the versioned service
+isolation. That limitation is accepted under the current cooperative provider
+model for source builds and for the unsigned prebuilt app alike: an unsigned
+app has no stable signing identity to bind access to, and neither kind of build
+is more exposed than the other. App-bound credential access is later work.
+Team tokens use the versioned service
 `app.researchcontrolpanel.rcp.team-member-token.source-v1` and a distinct
 connection account. The immediately preceding D4 checkpoint never created a
 saved team registry or a token in its unversioned pre-live namespace, so this
@@ -1067,6 +1069,23 @@ A local Codex thread created through RCP's app-server runtime is stored by Codex
 and may therefore appear in the Codex Desktop task list. RCP uses that as an
 inspection surface only. Sidebar ordering, loading, takeover, and concurrency
 remain Codex Desktop behavior rather than RCP product state.
+
+### Update notice
+
+`GET /api/update-notice` returns the cached release check: space, status
+(`update_available`, `current`, `pinned`, `unchecked`, `failed`, `off`,
+`unknown`), current and latest versions, check times, companion readiness, a
+locally built download URL, and the update command. The one update surface,
+shown on the project index, setup screens, and every project view, renders it:
+a team space shows `sudo rcp server update`; a source checkout shows
+`scripts/update-from-source vX.Y.Z` (with `--desktop` from a source app); a
+prebuilt app shows a Download button only once the companion is confirmed.
+The native shell reports its build kind, version, and checkout through
+`desktop_build_identity`, because a desktop may reuse a backend of the other
+kind. A visible page polls the endpoint (30 s while `unchecked`, then 10 min,
+and on becoming visible); dismissal is per release. A protocol mismatch names
+the confirmed download, the releases page when the check is unavailable, or the
+update script for a source build.
 
 ## Frontend trust boundary
 

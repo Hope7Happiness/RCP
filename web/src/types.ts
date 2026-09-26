@@ -2996,3 +2996,16 @@ export interface TerminalSession {
   state: "live" | "idle";
   running_work: TerminalWorkTurn[];
 }
+
+export interface UpdateNotice {
+  space: "team" | "personal";
+  status: "update_available" | "current" | "pinned" | "unchecked" | "failed" | "off" | "unknown";
+  current_version: string | null;
+  latest_version: string | null;
+  checked_at: string | null;
+  last_success_at: string | null;
+  companion_ready: boolean;
+  download_url: string | null;
+  source_checkout: boolean;
+  update_command: string | null;
+}

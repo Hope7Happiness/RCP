@@ -48,6 +48,7 @@ from rcp.server_runtime import (
     published_server_metadata,
     read_server_metadata,
 )
+from rcp.source_checkout import source_checkout_lock
 from rcp.storage import AppStore
 from rcp.web_assets import WebBuildError, prepared_web_assets
 
@@ -397,40 +398,45 @@ def _require_team_bind_is_loopback(args: argparse.Namespace, data_dir: Path) -> 
 
 def _serve_as_owner(args: argparse.Namespace, data_dir: Path) -> None:
     _require_team_bind_is_loopback(args, data_dir)
-    control_socket = installed_control_socket_path(data_dir)
-    release_identity = capture_installed_release_identity() if control_socket is not None else None
-    metadata = ServerMetadata.create(
-        data_dir,
-        host=args.host,
-        port=args.port,
-        owner_kind=getattr(args, "owner", "cli"),
-        control_socket=control_socket,
-        running_commit=release_identity.commit if release_identity is not None else None,
-        web_build_id=release_identity.web_build_id if release_identity is not None else None,
-    )
-    try:
-        with (
-            _reserved_server_socket(args.host, args.port) as server_socket,
-            published_server_metadata(data_dir, metadata),
-        ):
-            _run_server(
-                args,
-                metadata,
-                server_fd=server_socket.fileno(),
-                on_ready=lambda: _emit_launch_outcome(args, "owned", metadata=metadata, owned=True),
-            )
-        _drain_worker_threads()
-    except OSError as exc:
-        if getattr(args, "machine_readable", False):
-            _exit_refused(
-                args,
-                LaunchRefused(
-                    "refused-occupied",
-                    EXIT_REFUSED_OCCUPIED,
-                    f"Cannot bind {_base_url(args.host, args.port)}: {exc}",
-                ),
-            )
-        raise SystemExit(f"Cannot bind {_base_url(args.host, args.port)}: {exc}") from exc
+    with source_checkout_lock():
+        control_socket = installed_control_socket_path(data_dir)
+        release_identity = (
+            capture_installed_release_identity() if control_socket is not None else None
+        )
+        metadata = ServerMetadata.create(
+            data_dir,
+            host=args.host,
+            port=args.port,
+            owner_kind=getattr(args, "owner", "cli"),
+            control_socket=control_socket,
+            running_commit=release_identity.commit if release_identity is not None else None,
+            web_build_id=release_identity.web_build_id if release_identity is not None else None,
+        )
+        try:
+            with (
+                _reserved_server_socket(args.host, args.port) as server_socket,
+                published_server_metadata(data_dir, metadata),
+            ):
+                _run_server(
+                    args,
+                    metadata,
+                    server_fd=server_socket.fileno(),
+                    on_ready=lambda: _emit_launch_outcome(
+                        args, "owned", metadata=metadata, owned=True
+                    ),
+                )
+            _drain_worker_threads()
+        except OSError as exc:
+            if getattr(args, "machine_readable", False):
+                _exit_refused(
+                    args,
+                    LaunchRefused(
+                        "refused-occupied",
+                        EXIT_REFUSED_OCCUPIED,
+                        f"Cannot bind {_base_url(args.host, args.port)}: {exc}",
+                    ),
+                )
+            raise SystemExit(f"Cannot bind {_base_url(args.host, args.port)}: {exc}") from exc
 
 
 def _drain_worker_threads(*, timeout: float = SERVER_THREAD_DRAIN_TIMEOUT_SECONDS) -> None:

@@ -1,6 +1,6 @@
 [package]
 name = "rcp-desktop"
-version = "0.3.2"
+version = "0.4.3"
 description = "Desktop entrance for Research Control Panel"
 authors = ["RCP contributors"]
 edition = "2021"

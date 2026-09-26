@@ -1,3 +1,5 @@
+import { ReleaseCheckRow } from "../components/UpdateNotice";
+import type { UpdateNotice } from "../types";
 import {
   BookOpen,
   Check,
@@ -62,6 +64,7 @@ import type {
 } from "../types";
 
 interface Props {
+  updateNotice?: UpdateNotice | null;
   apiBase: string;
   project: ProjectSnapshot;
   identity: IdentityResponse | null;
@@ -170,6 +173,7 @@ function stagedOrSaved(project: ProjectSnapshot) {
 }
 
 export function ProjectSettings({
+  updateNotice = null,
   apiBase,
   project,
   identity,
@@ -586,7 +590,13 @@ export function ProjectSettings({
 
   return (
     <section className="settings-page">
-      {spaceKind === "team" ? <ServerSettings /> : null}
+      {spaceKind === "team" ? (
+        <ServerSettings updateNotice={updateNotice} />
+      ) : (
+        <section className="settings-section">
+          <ReleaseCheckRow notice={updateNotice} />
+        </section>
+      )}
       <AgentUsageWidgets usage={usage} providers={project.providers} />
 
       {showTextScale && (

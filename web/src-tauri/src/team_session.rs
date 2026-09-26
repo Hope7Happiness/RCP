@@ -19,7 +19,7 @@ use uuid::{Uuid, Version as UuidVersion};
 use zeroize::Zeroizing;
 
 use crate::{
-    backend::BackendState,
+    backend::{self, BackendState},
     lifecycle::DesktopStatus,
     local_https::{install_team_session_cookie, LocalHttpsIdentity},
     project_transfer::{
@@ -157,6 +157,7 @@ pub struct ProjectTransferTargetReadback {
 }
 
 pub struct TeamSessionState {
+    personal: BackendState,
     certificate_der: Vec<u8>,
     established: Mutex<HashMap<String, EstablishedTeamSession>>,
     cookies: Mutex<HashMap<String, Zeroizing<String>>>,
@@ -166,13 +167,60 @@ pub struct TeamSessionState {
 }
 
 impl TeamSessionState {
-    pub fn new(identity: &LocalHttpsIdentity) -> Self {
+    pub fn new(identity: &LocalHttpsIdentity, personal: BackendState) -> Self {
         Self {
+            personal,
             certificate_der: identity.certificate_der().to_vec(),
             established: Mutex::new(HashMap::new()),
             cookies: Mutex::new(HashMap::new()),
             renewal: tokio::sync::Mutex::new(()),
         }
+    }
+
+    async fn validate_health(
+        &self,
+        health: &TeamHealth,
+        expected: Option<&TeamConnectionMetadata>,
+    ) -> Result<u32, String> {
+        validate_health_identity(health, expected)?;
+        match select_team_shell_protocol(health) {
+            Err(error)
+                if health.team_shell_protocol.as_ref().is_some_and(|range| {
+                    range.minimum > TEAM_SHELL_PROTOCOL_MAXIMUM && range.minimum <= range.maximum
+                }) =>
+            {
+                let notice = self.personal_update_notice().await;
+                Err(format!(
+                    "{error} {}",
+                    desktop_update_action(backend::desktop_build_kind(), notice.as_ref())
+                ))
+            }
+            result => result,
+        }
+    }
+
+    async fn personal_update_notice(&self) -> Option<DesktopUpdateNotice> {
+        let status = self.personal.status().ok()?;
+        let client = Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .ok()?;
+        let notice = client
+            .get(endpoint(&status.base_url, "/api/update-notice").ok()?)
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .json::<DesktopUpdateNotice>()
+            .await
+            .ok()?;
+        backend::reverify_identity(&self.personal, &status)
+            .await
+            .ok()?;
+        Some(notice)
     }
 
     pub fn status_for_origin(&self, origin: &Url) -> Result<Option<DesktopStatus>, String> {
@@ -691,7 +739,7 @@ impl TeamSessionState {
             .await?;
         let client = self.client(&ready.local_origin)?;
         let health = read_health(&client, &ready.local_origin).await?;
-        let protocol = validate_health(&health, Some(&connection))?;
+        let protocol = self.validate_health(&health, Some(&connection)).await?;
         let (identity, cookie) = self
             .resume_or_exchange_session(connections, &client, &connection, &health, protocol)
             .await?;
@@ -786,7 +834,7 @@ impl TeamSessionState {
             .await?;
         let client = self.client(&ready.local_origin)?;
         let health = read_health(&client, &ready.local_origin).await?;
-        let protocol = validate_health(&health, Some(&connection))?;
+        let protocol = self.validate_health(&health, Some(&connection)).await?;
         let (identity, cookie) = self
             .resume_or_exchange_session(connections, &client, &connection, &health, protocol)
             .await?;
@@ -808,7 +856,7 @@ impl TeamSessionState {
     ) -> Result<EstablishedTeamSession, String> {
         let client = self.client(&ready.local_origin)?;
         let health = read_health(&client, &ready.local_origin).await?;
-        let protocol = validate_health(&health, None)?;
+        let protocol = self.validate_health(&health, None).await?;
         let connection = new_connection(ready, ssh_target, remote_loopback_port, &health);
         connections.save_metadata(connection.clone())?;
         let enrolled: EnrollmentResponse = match post_json(
@@ -853,7 +901,7 @@ impl TeamSessionState {
     ) -> Result<EstablishedTeamSession, String> {
         let client = self.client(&ready.local_origin)?;
         let health = read_health(&client, &ready.local_origin).await?;
-        validate_health(&health, None)?;
+        self.validate_health(&health, None).await?;
         let connection = new_connection(ready, ssh_target, remote_loopback_port, &health);
         connections.save_metadata(connection.clone())?;
         if let Err(error) = connections.store_member_token(&ready.connection_id, token.to_string())
@@ -954,7 +1002,7 @@ impl TeamSessionState {
     ) -> Result<(Client, TeamHealth, u32), String> {
         let client = self.client(&connection.local_origin)?;
         let health = read_health(&client, &connection.local_origin).await?;
-        let protocol = validate_health(&health, Some(connection))?;
+        let protocol = self.validate_health(&health, Some(connection)).await?;
         if health.instance_id != session.status.instance_id
             || health.data_dir_id != session.status.data_dir_id
             || health.version != session.status.version
@@ -1388,10 +1436,19 @@ fn endpoint(origin: &str, path: &str) -> Result<Url, String> {
     Ok(url)
 }
 
+#[cfg(test)]
 fn validate_health(
     health: &TeamHealth,
     expected: Option<&TeamConnectionMetadata>,
 ) -> Result<u32, String> {
+    validate_health_identity(health, expected)?;
+    select_team_shell_protocol(health)
+}
+
+fn validate_health_identity(
+    health: &TeamHealth,
+    expected: Option<&TeamConnectionMetadata>,
+) -> Result<(), String> {
     if health.status != "ok"
         || health.space_kind != "team"
         || health.owner_kind != EXPECTED_SERVER_OWNER
@@ -1422,7 +1479,7 @@ fn validate_health(
             );
         }
     }
-    select_team_shell_protocol(health)
+    Ok(())
 }
 
 fn select_team_shell_protocol(health: &TeamHealth) -> Result<u32, String> {
@@ -1454,7 +1511,7 @@ fn select_team_shell_protocol(health: &TeamHealth) -> Result<u32, String> {
     let action = if server.maximum < TEAM_SHELL_PROTOCOL_MINIMUM {
         "Have the server operator install a compatible promoted RCP release"
     } else {
-        "Update and rebuild RCP desktop from current origin/main"
+        "Install a compatible release of RCP desktop"
     };
     Err(format!(
         "RCP desktop supports team-shell protocol {TEAM_SHELL_PROTOCOL_MINIMUM} through \
@@ -1462,6 +1519,44 @@ fn select_team_shell_protocol(health: &TeamHealth) -> Result<u32, String> {
          supports {} through {} at source {server_commit}. {action}, then reconnect.",
         server.minimum, server.maximum
     ))
+}
+
+const RELEASES_PAGE: &str = "https://github.com/Zhi0467/RCP/releases";
+
+#[derive(Deserialize)]
+struct DesktopUpdateNotice {
+    status: String,
+    latest_version: Option<String>,
+    companion_ready: bool,
+    download_url: Option<String>,
+}
+
+fn desktop_update_action(kind: &str, notice: Option<&DesktopUpdateNotice>) -> String {
+    // A failed cycle keeps the previous release and companion cached; use them
+    // only when the current check succeeded.
+    let checked = notice
+        .is_some_and(|notice| matches!(notice.status.as_str(), "update_available" | "current"));
+    if kind == "prebuilt" {
+        if let Some(url) = notice
+            .filter(|notice| checked && notice.companion_ready)
+            .and_then(|notice| notice.download_url.as_deref())
+        {
+            return format!("Download a compatible release: {url}.");
+        }
+        // Only a check that succeeded can say the companion is missing; an
+        // unavailable check leaves the manual releases page.
+        if checked {
+            return "The app build for the latest release is not published yet.".into();
+        }
+        return format!("Find a compatible release at {RELEASES_PAGE}.");
+    }
+    match notice
+        .filter(|_| checked)
+        .and_then(|notice| notice.latest_version.as_deref())
+    {
+        Some(version) => format!("To install a compatible release, run scripts/update-from-source v{version} --desktop in the source checkout."),
+        None => "To install a compatible release, run scripts/update-from-source <tag> --desktop in the source checkout, using the tag of the latest release.".into(),
+    }
 }
 
 fn highest_common_protocol(
@@ -1816,7 +1911,6 @@ mod tests {
         let error = validate_health(&stale_desktop, None).unwrap_err();
         assert!(error.contains(DESKTOP_SOURCE_COMMIT));
         assert!(error.contains(installed_server_commit(&stale_desktop)));
-        assert!(error.contains("Update and rebuild RCP desktop"));
 
         let mut stale_server = health();
         stale_server.team_shell_protocol = None;
@@ -1824,6 +1918,37 @@ mod tests {
         assert!(error.contains(DESKTOP_SOURCE_COMMIT));
         assert!(error.contains(installed_server_commit(&stale_server)));
         assert!(error.contains("promoted RCP release"));
+    }
+
+    #[test]
+    fn desktop_mismatch_actions_follow_build_kind_and_companion_readiness() {
+        let mut notice = DesktopUpdateNotice {
+            status: "update_available".into(),
+            latest_version: Some("0.4.3".into()),
+            companion_ready: true,
+            download_url: Some("https://github.com/Zhi0467/RCP/releases/tag/desktop-v0.4.3".into()),
+        };
+        let ready = desktop_update_action("prebuilt", Some(&notice));
+        assert!(ready.contains(notice.download_url.as_deref().unwrap()));
+        assert!(!ready.contains("scripts/update-from-source"));
+        notice.companion_ready = false;
+        let pending = desktop_update_action("prebuilt", Some(&notice));
+        assert!(!pending.contains("https://"));
+        assert!(!pending.contains("scripts/update-from-source"));
+        notice.companion_ready = true;
+        for status in ["off", "failed", "unchecked", "unknown"] {
+            notice.status = status.into();
+            assert!(desktop_update_action("prebuilt", Some(&notice)).contains(RELEASES_PAGE));
+        }
+        assert!(desktop_update_action("prebuilt", None).contains(RELEASES_PAGE));
+        notice.status = "update_available".into();
+        assert!(desktop_update_action("source", Some(&notice))
+            .contains("scripts/update-from-source v0.4.3 --desktop"));
+        assert!(desktop_update_action("source", None)
+            .contains("scripts/update-from-source <tag> --desktop"));
+        notice.status = "failed".into();
+        assert!(desktop_update_action("source", Some(&notice))
+            .contains("scripts/update-from-source <tag> --desktop"));
     }
 
     #[test]
@@ -1934,6 +2059,7 @@ mod tests {
     #[test]
     fn connection_reuses_only_its_own_request_cookie() {
         let state = TeamSessionState {
+            personal: BackendState::default(),
             certificate_der: Vec::new(),
             established: Mutex::new(HashMap::new()),
             cookies: Mutex::new(HashMap::new()),
@@ -1982,6 +2108,7 @@ mod tests {
     #[test]
     fn forgetting_a_connection_removes_only_its_cookie() {
         let state = TeamSessionState {
+            personal: BackendState::default(),
             certificate_der: Vec::new(),
             established: Mutex::new(HashMap::new()),
             cookies: Mutex::new(HashMap::new()),

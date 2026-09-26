@@ -109,3 +109,12 @@ jobs:
           uv run --no-project python packaging/release_build.py verify-manifest \
             promoted-assets \
             --manifest "$PWD/build-assets/manifest.sha256"
+
+  desktop:
+    name: publish desktop companion
+    needs: [promote]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-desktop.yml
+    with:
+      tag: ${{ inputs.tag }}

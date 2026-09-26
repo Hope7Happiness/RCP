@@ -61,13 +61,20 @@ def github(monkeypatch: pytest.MonkeyPatch):
         "status": 200,
         "length": True,
         "redirect": None,
+        "companion": None,
     }
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             fixture["requests"].append(self.path)
             if self.path.startswith("/repos/"):
-                data = json.dumps(fixture["metadata"]).encode()
+                if "/tags/desktop-" in self.path:
+                    metadata = fixture["companion"]
+                elif self.path.endswith("/releases"):
+                    metadata = [fixture["metadata"], fixture["companion"]]
+                else:
+                    metadata = fixture["metadata"]
+                data = json.dumps(metadata).encode()
             else:
                 name = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
                 data = fixture["assets"][name]
@@ -201,6 +208,27 @@ def test_fetch_publishes_verified_bundle_and_reuses_it(
 
     assert len(github["requests"]) == count + 2  # Resolve identity and compare manifest only.
     assert {path.name: path.stat().st_ino for path in directory.iterdir()} == identities
+
+
+def test_stable_accepts_five_assets_with_companion_but_rejects_sixth(github, tmp_path) -> None:
+    companion = _metadata({"RCP.zip": b"desktop"}, tag="desktop-v0.3.2")
+    companion["prerelease"] = True
+    github["companion"] = companion
+
+    verified = releases.fetch_release("stable", tmp_path / "accepted")
+
+    assert verified.release_tag == "v0.3.2"
+    assert len(list(verified.directory.iterdir())) == 5
+    assert github["requests"][0] == "/repos/Zhi0467/RCP/releases/latest"
+    assert not any("desktop-v" in path for path in github["requests"])
+    github["metadata"]["assets"].extend(_metadata({"RCP.zip": b"desktop"})["assets"])
+    github["requests"].clear()
+
+    with pytest.raises(SupervisorError):
+        releases.fetch_release("stable", tmp_path / "rejected")
+
+    assert github["requests"] == ["/repos/Zhi0467/RCP/releases/latest"]
+    assert not (tmp_path / "rejected").exists()
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,5 @@
 import type {
+  UpdateNotice,
   Machine,
   ExternalWatcherRecord,
   ChatAttachmentDescriptor,
@@ -222,6 +223,10 @@ export function createTeamProjectProvisioning(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export function loadUpdateNotice(): Promise<UpdateNotice> {
+  return api<UpdateNotice>("/api/update-notice");
 }
 
 export function loadServerStatus(): Promise<ServerStatus> {

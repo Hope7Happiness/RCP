@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Update this source checkout to an explicit promoted release."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+class UpdateError(Exception):
+    """A named update step failed."""
+
+
+def run(root: Path, step: str, args: list[str], *, capture: bool = False) -> str:
+    print(f"{step}: {shlex.join(args)}", flush=True)
+    try:
+        result = subprocess.run(args, cwd=root, check=True, text=True, capture_output=capture)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise UpdateError(f"{step} failed: {exc}") from exc
+    return result.stdout.strip() if capture else ""
+
+
+BUILD_STEPS = [
+    ("Install web dependencies", ["npm", "--prefix", "web", "ci"]),
+    ("Build web", ["npm", "--prefix", "web", "run", "build"]),
+    ("Sync Python", ["uv", "sync"]),
+]
+
+
+def build(root: Path) -> None:
+    for step, args in BUILD_STEPS:
+        run(root, step, args)
+
+
+def restore(root: Path, recovery: list[str]) -> None:
+    """Return to the start and rebuild it, so old code never meets new artifacts."""
+    print("Restoring the starting revision", file=sys.stderr, flush=True)
+    try:
+        run(root, "Restore checkout", recovery)
+        build(root)
+    except UpdateError as exc:
+        remaining = [recovery, *(args for _, args in BUILD_STEPS)]
+        print(f"{exc}. Finish restoring with:", file=sys.stderr)
+        for args in remaining:
+            print(f"  {shlex.join(args)}", file=sys.stderr)
+        return
+    print("Restored the starting revision and its build", file=sys.stderr, flush=True)
+
+
+def update(root: Path, tag: str, desktop: bool) -> None:
+    if re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag) is None:
+        raise UpdateError("Tag validation failed: expected vX.Y.Z")
+    if not (root / ".git").exists():
+        raise UpdateError("Checkout validation failed: no .git directory or file")
+    with (root / ".rcp-serve.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise UpdateError(
+                "Checkout lock failed: stop every backend using this checkout"
+            ) from exc
+        tools = ["git", "uv", "npm"] + (["cargo", "rustc", "xcode-select"] if desktop else [])
+        missing = [tool for tool in tools if shutil.which(tool) is None]
+        if missing:
+            raise UpdateError(f"Tool preflight failed: missing {', '.join(missing)}")
+        if desktop:
+            run(root, "Xcode preflight", ["xcode-select", "--print-path"], capture=True)
+        dirty = run(
+            root,
+            "Tree preflight",
+            [
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--",
+                ".",
+                ":(exclude).rcp-serve.lock",
+            ],
+            capture=True,
+        )
+        if dirty:
+            raise UpdateError(
+                "Tree preflight failed: commit or move uncommitted and untracked files"
+            )
+        commit = run(root, "Record starting commit", ["git", "rev-parse", "HEAD"], capture=True)
+        # rev-parse --abbrev-ref returns HEAD for detached checkouts.
+        branch = run(
+            root,
+            "Record starting branch",
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture=True,
+        )
+        recovery = (
+            ["git", "checkout", "--detach", commit]
+            if branch == "HEAD"
+            else ["git", "switch", branch]
+        )
+        print(f"Starting at {branch} ({commit})", flush=True)
+        print(f"Way back: {shlex.join(recovery)}", flush=True)
+        ref = f"refs/tags/{tag}"
+        run(root, "Fetch release", ["git", "fetch", "origin", f"{ref}:{ref}"])
+        try:
+            run(root, "Checkout release", ["git", "checkout", "--detach", ref])
+            build(root)
+            if desktop:
+                run(root, "Build desktop", ["npm", "--prefix", "web", "run", "desktop:build-dev"])
+        except (UpdateError, KeyboardInterrupt):
+            restore(root, recovery)
+            raise
+    if desktop:
+        print("Replace /Applications/RCP.app with web/src-tauri/target/debug/bundle/macos/RCP.app,")
+        print("then reopen /Applications/RCP.app.")
+    else:
+        print("Restart: uv run rcp serve")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tag", help="promoted release tag, for example v0.4.3")
+    parser.add_argument(
+        "--desktop", action="store_true", help="also build the development desktop app"
+    )
+    args = parser.parse_args()
+    try:
+        update(Path(__file__).resolve().parent.parent, args.tag, args.desktop)
+    except (UpdateError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

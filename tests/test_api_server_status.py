@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from rcp.api.app import create_app
 from rcp.api.server_status import project_server_status
+from rcp.release_check import UpdateNotice
 from rcp.server_ops.backup import BackupArchiveReceipt, BackupRunRefused
 from rcp.server_ops.doctor import ServerDoctorReport
 from rcp.storage import AppStore
@@ -117,13 +118,13 @@ def test_server_status_projects_concrete_read_models_without_mutation(tmp_path) 
     assert payload["overall"] == {"tone": "bad"}
     payload["releases"]["status"].pop("label")
     assert payload["releases"] == {
-        "status": {"tone": "attention"},
+        "status": {"tone": "good"},
         "managed_source_commit": COMMIT,
         "current_release_commit": COMMIT,
         "running_commit": COMMIT,
         "upstream_commit": UPSTREAM,
         "candidate_commit": None,
-        "update_available": True,
+        "update_available": False,
         "last_update_failure": None,
         "command": "rcp server update",
     }
@@ -225,6 +226,7 @@ def test_server_status_does_not_invent_a_restore_age() -> None:
         protected_backup=None,
         restored_at=None,
         now=NOW,
+        release_check=UpdateNotice(space="team", status="unchecked", current_version=None),
     )
 
     assert status.restore.drill_age_days is None
@@ -236,6 +238,7 @@ def test_server_status_names_selected_release_without_source_freshness_claim() -
         protected_backup=None,
         restored_at=None,
         now=NOW,
+        release_check=UpdateNotice(space="team", status="unchecked", current_version=None),
     )
     assert status.releases.current_release_commit == COMMIT
     assert status.releases.update_available is False
