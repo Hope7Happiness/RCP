@@ -771,6 +771,20 @@ async def _stream_agent_events(
     )
     remote_pass_recorded = False
     supervisor_path: str | None = None
+    if (
+        execution is not None
+        and not execution_host
+        and execution.runtime_id.endswith(".herdr-native.v1")
+        and execution.store.unresolved_herdr_bindings(str(workspace))
+    ):
+        outcome.failed = True
+        yield _sse(
+            AgentEvent(
+                event="error",
+                text="A previous Herdr agent in this stage has not been confirmed closed.",
+            )
+        )
+        return
     if remote_stage is not None:
         try:
             if supervise_remote:
@@ -844,6 +858,14 @@ async def _stream_agent_events(
         )
     ) as stream:
         async for event in stream:
+            if event.event in {"herdr_binding_start", "herdr_binding_stop"}:
+                if execution is not None:
+                    binding = json.loads(event.text)
+                    if event.event == "herdr_binding_start":
+                        execution.store.begin_herdr_binding(execution.operation_id, binding)
+                    else:
+                        execution.store.finish_herdr_binding(execution.operation_id, binding)
+                continue
             if event.event == "provider_exit":
                 try:
                     evidence = json.loads(event.text)

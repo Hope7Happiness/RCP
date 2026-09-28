@@ -45,6 +45,7 @@ def _parser():
     parser.add_argument("--ready-line", required=True)
     parser.add_argument("--response-timeout", required=True, type=float)
     parser.add_argument("--standalone", action="store_true")
+    parser.add_argument("--external-root-pid", type=int)
     parser.add_argument("provider", nargs=argparse.REMAINDER)
     return parser
 
@@ -415,11 +416,23 @@ def main(argv=None):
         os.chmod(socket_path, 0o600)
         server.listen(16)
         _preflight_peer_identity(server, socket_path)
+        if namespace.external_root_pid is not None and not namespace.standalone:
+            raise BrokerError("external root requires standalone broker mode")
         if namespace.standalone:
             if namespace.provider:
                 raise BrokerError("standalone broker does not accept a provider command")
-            root_pid = os.getppid()
-            expected_session = os.getsid(0)
+            if namespace.external_root_pid is not None:
+                if namespace.external_root_pid <= 0:
+                    raise BrokerError("external provider process identity is malformed")
+                if not sys.platform.startswith("linux"):
+                    raise BrokerError("external provider binding requires Linux process identity")
+                root_pid = namespace.external_root_pid
+                expected_session = None
+                if os.stat(f"/proc/{root_pid}").st_uid != os.getuid():
+                    raise BrokerError("external provider process belongs to another account")
+            else:
+                root_pid = os.getppid()
+                expected_session = os.getsid(0)
         else:
             provider = list(namespace.provider)
             if provider and provider[0] == "--":

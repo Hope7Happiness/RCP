@@ -1093,6 +1093,13 @@ Provider naming is a backend answer. Readiness exports each provider's runtime
 choices and its default, and a task and a Paper writing session each export the
 label for the runtime they ran on, so no surface maps a durable runtime id or
 picks a default itself.
+The Claude `herdr-native` choice is available in the same profile selector;
+the backend enforces its local Discuss/Work and Herdr-pane prerequisites at
+launch. The browser continues to display the ordinary task, session, answer,
+and result projections. A visible Herdr pane is an additional interaction
+surface, not a substitute for those records or for a provider completion
+receipt. Unsupported capabilities and missing Herdr context receive a task
+error rather than an implicit runtime change.
 
 The browser may stage human drafts and render backend projections; it is not the
 owner of authority, tasks, graph rules, provider authentication, watcher

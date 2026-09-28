@@ -152,6 +152,11 @@ attempt, because a follow-up uses that attempt's captured mode. A turn that
 cannot receive input leaves the toggle available for the next ordinary turn.
 Episode workers cannot be steered; the human continues to message their orchestrator
 through the episode's ordinary mail path.
+Herdr native turns accept the initial RCP prompt in the visible Claude pane,
+but do not offer an RCP composer steer during an active attempt. The human may
+inspect the pane; extra direct terminal input is outside the captured RCP turn
+and cannot supply its structured answer or graph patch. The native turn's
+captured capability and stage still govern its task result.
 
 Each steer is stored as the human's chat message with its addressed task attempt
 and a **delivered**, **refused**, or **unknown** receipt. A delivered receipt is

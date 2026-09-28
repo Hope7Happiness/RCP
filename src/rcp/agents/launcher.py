@@ -6,16 +6,19 @@ import logging
 import os
 import pwd
 import re
+import secrets
 import shlex
 import shutil
 import signal
 import stat
 import subprocess
+import sys
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import Future
-from contextlib import aclosing, suppress
+from contextlib import AsyncExitStack, aclosing, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -35,6 +38,7 @@ from rcp.agents.steering import LiveProviderSteering
 from rcp.agents.write_scope import ProjectWriteScope
 from rcp.artifacts import AgentArtifactDescriptor
 from rcp.limits import (
+    HERDR_NATIVE_RECEIPT_POLL_SECONDS,
     PROVIDER_CREDENTIAL_STARTUP_MIN_HOLD_SECONDS,
     PROVIDER_STDERR_DRAIN_TIMEOUT_SECONDS,
     REMOTE_PROVIDER_KILL_WAIT_SECONDS,
@@ -199,6 +203,8 @@ class AgentEvent(BaseModel):
         # Internal process ownership receipts; these convey no prompt authority.
         "remote_process_start",
         "remote_process_stop",
+        "herdr_binding_start",
+        "herdr_binding_stop",
         # The run connection ended after the execution host accepted a
         # supervised turn. The original task now waits for that host's journal.
         "remote_result_pending",
@@ -663,6 +669,14 @@ def _unreachable_readiness(
         link_lost=_link_lost(probe),
         reason=_unreachable_reason(probe, host=host, checked=binary_path or provider),
     )
+
+
+def _native_binary_matches(pid: int, binary: str) -> bool:
+    """Bind Herdr's foreground group to the executable RCP checked."""
+
+    if not sys.platform.startswith("linux"):
+        return True
+    return Path(os.readlink(f"/proc/{pid}/exe")).resolve() == Path(binary).resolve()
 
 
 class AgentLauncher:
@@ -1275,6 +1289,30 @@ class AgentLauncher:
             return
         runtime = profile.runtime(runtime_id)
         resolved_binary = getattr(readiness, "binary_path", None) or binary or provider
+        if runtime.id.endswith(".herdr-native.v1"):
+            async for event in self._stream_herdr_native(
+                provider,
+                prompt,
+                cwd=cwd,
+                model=model,
+                reasoning=reasoning,
+                session_id=session_id,
+                read_dirs=read_dirs or [],
+                write_dirs=write_dirs or [],
+                write_scope=write_scope,
+                host=host,
+                control=control,
+                invocation_gate=invocation_gate,
+                capability=capability,
+                binary=resolved_binary,
+                runtime_id=runtime.id,
+                provider_version=getattr(readiness, "version", None),
+                before_start=before_start,
+                git_access=git_access,
+                operation_id=operation_id,
+            ):
+                yield event
+            return
         legacy_command = (
             self._command(
                 provider,
@@ -1826,6 +1864,234 @@ class AgentLauncher:
             finally:
                 if control is not None:
                     control.detach(process)
+
+    async def _stream_herdr_native(
+        self,
+        provider: str,
+        prompt: str,
+        *,
+        cwd: Path,
+        model: str | None,
+        reasoning: str | None,
+        session_id: str | None,
+        read_dirs: list[Path],
+        write_dirs: list[Path],
+        write_scope: ProjectWriteScope | None,
+        host: str,
+        control: AgentProcessControl | None,
+        invocation_gate: ProviderInvocationGate | None,
+        capability: AgentCapability,
+        binary: str,
+        runtime_id: str,
+        provider_version: str | None,
+        before_start: Callable[[], Awaitable[None]] | None,
+        git_access: ProviderGitAccess | None,
+        operation_id: str | None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Run one native interactive turn with a provider-authored receipt.
+
+        The pane is owned by this invocation. RCP closes it before reporting a
+        terminal event so no later unrecorded turn can inherit Work authority.
+        """
+
+        from rcp.agents.herdr_bridge import HerdrNativeAdapter, build_native_agent_args
+        from rcp.agents.herdr_receipts import (
+            claude_turn_receipt,
+            find_native_transcript,
+        )
+
+        if host:
+            yield AgentEvent(event="error", text="Herdr native execution is local only.")
+            return
+        if capability not in {"discuss", "work_auto"}:
+            yield AgentEvent(
+                event="error", text=f"Herdr native execution does not support {capability}."
+            )
+            return
+        if capability == "work_auto" and invocation_gate is None:
+            yield AgentEvent(
+                event="error", text="Herdr Work requires its process-bound command broker."
+            )
+            return
+        parent_pane_id = os.environ.get("HERDR_PANE_ID", "")
+        if os.environ.get("HERDR_ENV") != "1" or not parent_pane_id:
+            yield AgentEvent(
+                event="error", text="RCP must run inside a Herdr pane for native execution."
+            )
+            return
+        adapter = HerdrNativeAdapter()
+        if session_id:
+            try:
+                active = await adapter.session_active(provider, session_id, cwd=cwd)
+            except (OSError, RuntimeError, ValueError) as exc:
+                yield AgentEvent(event="error", text=str(exc))
+                return
+            if active is not False:
+                yield AgentEvent(
+                    event="error",
+                    text="The saved native session may still be live in Herdr; close its previous pane before continuing.",
+                )
+                return
+        request = ProviderTurnRequest(
+            prompt=prompt,
+            binary=binary,
+            cwd=cwd,
+            model=model,
+            reasoning=reasoning,
+            session_id=session_id,
+            read_dirs=read_dirs,
+            write_dirs=write_dirs,
+            write_scope=write_scope,
+            capability=capability,
+            provider_version=provider_version,
+        )
+        fresh_claude_id = str(uuid.uuid4()) if provider == "claude" and not session_id else None
+        try:
+            args = build_native_agent_args(provider, request, fresh_session_id=fresh_claude_id)
+        except (OSError, RuntimeError, ValueError) as exc:
+            yield AgentEvent(event="error", text=str(exc))
+            return
+        hold = await self.credential_gate.hold(provider, "")
+        agent = None
+        agent_started_at: float | None = None
+        closed = False
+        binding: dict[str, object] | None = None
+        try:
+            if control is not None and control.pause_requested.is_set():
+                yield AgentEvent(event="paused", text="Paused before the Herdr agent started.")
+                return
+            if before_start is not None:
+                await before_start()
+            if reason := self._login_refusal(provider, ""):
+                yield AgentEvent(event="error", text=reason)
+                return
+            environment = self.process_environment(provider, "")
+            if git_access is not None:
+                environment, notices = await git_access.prepare(environment)
+                for notice in notices:
+                    yield AgentEvent(event="message", text=notice)
+            pane_env = {
+                **{
+                    key: value
+                    for key, value in (environment.local_env or {}).items()
+                    if not key.startswith("HERDR_")
+                },
+                "PATH": f"{Path(binary).parent}:{os.environ.get('PATH', '')}",
+            }
+            agent = await adapter.start(
+                parent_pane_id=parent_pane_id,
+                cwd=cwd,
+                provider=provider,
+                name=f"rcp{secrets.token_hex(6)}",
+                args=args,
+                env=pane_env,
+            )
+            agent_started_at = time.monotonic()
+            hold.restart_minimum()
+            native_id = session_id or fresh_claude_id
+            assert native_id is not None
+            transcript = find_native_transcript(provider, native_id, cwd)
+            offset = transcript.stat().st_size if transcript is not None else 0
+            process_identity = await adapter.process_info(agent)
+            if not _native_binary_matches(process_identity.group_leader_pid, binary):
+                raise RuntimeError(
+                    "Herdr started a different provider executable than RCP validated."
+                )
+            binding = {
+                "pane_id": agent.pane_id,
+                "agent_name": agent.name,
+                "provider": provider,
+                "native_session_id": native_id,
+                "process_group_id": process_identity.foreground_process_group_id,
+                "runtime_id": runtime_id,
+                "stage_root": str(cwd),
+            }
+            yield AgentEvent(event="herdr_binding_start", text=json.dumps(binding))
+            yield AgentEvent(event="session", session_id=native_id)
+            async with AsyncExitStack() as stack:
+                if invocation_gate is not None:
+                    await stack.enter_async_context(
+                        invocation_gate.serve_external_provider(process_identity.group_leader_pid)
+                    )
+                if control is not None and control.pause_requested.is_set():
+                    await asyncio.sleep(remaining_startup_hold(agent_started_at))
+                    await adapter.close(agent)
+                    closed = True
+                    yield AgentEvent(event="herdr_binding_stop", text=json.dumps(binding))
+                    yield AgentEvent(event="paused", text="Paused before the Herdr prompt.")
+                    return
+                yield AgentEvent(event="runtime", text=runtime_id)
+                # Submission can be ambiguous on socket loss. Never resend.
+                await adapter.prompt(agent, prompt)
+                receipt = None
+                # The prompt API acknowledged delivery; a fast turn may be
+                # idle again before the first poll sees its working state.
+                saw_activity = True
+                settled_at = None
+                while receipt is None:
+                    if control is not None and control.pause_requested.is_set():
+                        await asyncio.sleep(remaining_startup_hold(agent_started_at))
+                        await adapter.close(agent)
+                        closed = True
+                        yield AgentEvent(event="herdr_binding_stop", text=json.dumps(binding))
+                        yield AgentEvent(event="paused", text="Herdr native turn was paused.")
+                        return
+                    observation = await adapter.get(agent)
+                    if native_id and observation.session_id and observation.session_id != native_id:
+                        raise RuntimeError("Herdr agent switched native sessions during the turn.")
+                    if observation.state in {"working", "blocked"}:
+                        saw_activity = True
+                        settled_at = None
+                    elif observation.state in {"idle", "done"} and saw_activity:
+                        settled_at = settled_at or time.monotonic()
+                    if transcript is None:
+                        transcript = find_native_transcript(provider, native_id, cwd)
+                    if transcript is not None:
+                        receipt = claude_turn_receipt(
+                            transcript, offset=offset, session_id=native_id, prompt=prompt
+                        )
+                        if transcript.stat().st_size > offset:
+                            hold.release()
+                    if receipt is not None:
+                        break
+                    if settled_at is not None and time.monotonic() - settled_at > 5:
+                        raise RuntimeError(
+                            "Herdr became idle without a matching provider completion receipt."
+                        )
+                    await asyncio.sleep(HERDR_NATIVE_RECEIPT_POLL_SECONDS)
+            await adapter.close(agent)
+            closed = True
+            yield AgentEvent(event="herdr_binding_stop", text=json.dumps(binding))
+            yield AgentEvent(
+                event="provider_exit",
+                text=json.dumps(
+                    {
+                        "return_code": 0,
+                        "event_counts": {"session": 1, "answer": 1},
+                        "explicit_terminal_event": True,
+                        "herdr_pane_closed": True,
+                    }
+                ),
+            )
+            yield AgentEvent(event="answer", text=receipt.answer, session_id=native_id)
+            yield AgentEvent(event="done")
+        except (OSError, RuntimeError, ValueError) as exc:
+            if agent is not None and not closed:
+                with suppress(OSError, RuntimeError, ValueError):
+                    if agent_started_at is not None:
+                        await asyncio.sleep(remaining_startup_hold(agent_started_at))
+                    await adapter.close(agent)
+                    closed = True
+                    if binding is not None:
+                        yield AgentEvent(event="herdr_binding_stop", text=json.dumps(binding))
+            yield AgentEvent(event="error", text=str(exc))
+        finally:
+            hold.release()
+            if agent is not None and not closed:
+                with suppress(OSError, RuntimeError, ValueError):
+                    if agent_started_at is not None:
+                        await asyncio.sleep(remaining_startup_hold(agent_started_at))
+                    await adapter.close(agent)
 
     @staticmethod
     def _command(

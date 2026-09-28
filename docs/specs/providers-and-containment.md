@@ -179,6 +179,33 @@ Codex, so a local app-server-created conversation can appear in Codex Desktop.
 That visibility is provider-owned inspection; RCP does not order, take over, or
 coordinate Desktop tasks.
 
+Claude additionally offers `herdr-native` for local Discuss and Work turns when
+the RCP server itself runs inside a Herdr pane. RCP creates a right sibling of
+that explicit pane without moving focus, clears interactive shell aliases and
+functions that could add permission-bypass flags, then starts a real Claude
+interactive agent through Herdr. Its prompt is sent once through Herdr's agent
+API. A Herdr idle or done badge is only presentation state: RCP requires the
+matching user prompt, final assistant message, and terminal turn record in the
+provider's native session transcript before it records an answer. The pane is
+closed at the end of the RCP attempt, including Stop, so later terminal input
+cannot inherit that attempt's Work authority. RCP persists the pane, named
+agent, native session, and provider process group as task receipts; startup
+reconciles an unfinished binding before interrupting the task. Ambiguous
+identity fails closed. Herdr execution never falls back to a background runtime
+after a prompt may have been delivered.
+
+The Herdr choice requires a local Herdr socket and an already trusted Claude
+working directory. Claude's first-use workspace trust prompt blocks native
+startup; RCP reports that failure and closes its pane. The user must trust that
+directory in Claude before retrying. Remote execution, Scratch Patch, Paper,
+and Orchestrate do not have a Herdr native contract and fail explicitly when
+this runtime is selected. Codex's installed interactive CLI cannot disable
+ambient user configuration and rules with the flags used by its `exec` runtime,
+so Codex has no selectable Herdr runtime. Its existing `exec` and `app-server`
+paths remain available. The Herdr integration does not treat terminal text as
+Patch authority; the task stage's `patch.json` and ordinary Apply path retain
+that role.
+
 App-server usage counts the change in `tokenUsage.total` from the same thread's
 pre-turn resume snapshot (zero for a fresh thread) to the active turn's final
 snapshot. `last` covers only one model response, not a whole agent turn. Repeated
