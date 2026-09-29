@@ -39,6 +39,17 @@ but RCP never reads, indexes, copies, projects, validates, or authorizes from
 prior RCP transcript text. Provider-native session continuation may retain the
 provider's context without making the displayed transcript an RCP input.
 
+In a personal local project, a human may explicitly import one Codex native
+session by its UUID from the configured local Codex log roots. The source's
+native session id and working directory must match exactly one repository in
+that project. RCP stores a bounded snapshot of user and assistant text in its
+SQLite app data, including Codex's commentary/final labels, and shows it in
+Project Settings as read-only provider history. Reimporting the same source is
+idempotent and refreshes the snapshot when new records appear. There is no
+automatic tailing, bidirectional Herdr message sync, native session takeover,
+or conversion into canonical RCP chat, task, answer, or graph authority. A
+separate RCP turn never consumes this displayed history as task context.
+
 The first ordinary turn in an RCP-owned native session receives one master
 context. It supplies shared project context once: the current graph target and
 head, focused node, exact run-scope repository pointers, enabled-package

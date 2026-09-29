@@ -2532,6 +2532,33 @@ export interface ChatSummaryPage {
   limit: number;
 }
 
+/** An explicitly imported native transcript, displayed outside RCP chats. */
+export interface ImportedHistorySummary {
+  provider: "codex";
+  session_id: string;
+  source_sha256: string;
+  source_bytes: number;
+  repository_alias: string;
+  first_timestamp: string | null;
+  last_timestamp: string | null;
+  imported_at: string;
+  message_count: number;
+}
+
+export interface ImportedHistoryMessage {
+  message_id: string;
+  role: "user" | "assistant";
+  phase: "commentary" | "final_answer" | null;
+  timestamp: string;
+  text: string;
+}
+
+export interface ImportedHistoryPage extends ImportedHistorySummary {
+  offset: number;
+  limit: number;
+  messages: ImportedHistoryMessage[];
+}
+
 export interface SteerReceipt {
   attempt: number;
   turn_id: string;

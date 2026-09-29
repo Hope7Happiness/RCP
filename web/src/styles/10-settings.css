@@ -2989,3 +2989,44 @@ details[open] > .view-disclosure-summary > svg:last-child {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+.provider-history-import,
+.provider-history-selection,
+.provider-history-page-controls,
+.provider-history-message header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.provider-history-import input {
+  min-width: min(26rem, 100%);
+  flex: 1;
+}
+
+.provider-history-selection select {
+  display: block;
+  max-width: 100%;
+}
+
+.provider-history-messages {
+  margin-top: 1rem;
+}
+
+.provider-history-message {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.provider-history-message header time {
+  margin-left: auto;
+}
+
+.provider-history-message pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  margin: 0.6rem 0 0;
+}

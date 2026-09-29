@@ -62,6 +62,7 @@ from rcp.api.index import router as index_router
 from rcp.api.paper import router as paper_router
 from rcp.api.project_provisioning import router as project_provisioning_router
 from rcp.api.project_state import router as project_state_router
+from rcp.api.provider_history import router as provider_history_router
 from rcp.api.provider_login import router as provider_login_router
 from rcp.api.result_views import router as result_views_router
 from rcp.api.server_status import router as server_status_router
@@ -1984,6 +1985,7 @@ def create_app(
     app.include_router(episode_router)
     app.include_router(experiments_router)
     app.include_router(chats_router)
+    app.include_router(provider_history_router)
     app.include_router(history_router)
     app.include_router(paper_router)
     app.include_router(result_views_router)

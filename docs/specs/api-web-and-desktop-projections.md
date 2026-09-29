@@ -68,6 +68,14 @@ session expiry and metadata are owned by
 
 ## API composition and mutation boundary
 
+The personal-project provider-history routes list imported Codex sessions,
+return bounded message pages, and import or refresh one exact local native
+session by UUID. Import uses project write admission and verifies that the
+source is inside configured Codex roots and belongs to one local project
+repository. The Web Project Settings panel labels this as a read-only snapshot;
+its import and refresh controls never dispatch agent work or attach RCP
+conversation authority. Team and remote-project imports are refused.
+
 One FastAPI backend serves the JSON API and, when built, the React/Vite
 application. The optional Tauri shell starts or reuses that same backend. There
 is no second team protocol or frontend-owned background-worker runtime.
