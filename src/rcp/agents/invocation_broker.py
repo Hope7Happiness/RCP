@@ -93,3 +93,50 @@ class ProviderInvocationGate:
                 with suppress(ProcessLookupError):
                     process.kill()
                 await process.wait()
+
+    @asynccontextmanager
+    async def serve_external_provider(
+        self, root_pid: int, *, timeout_seconds: float = 5.0
+    ) -> AsyncIterator[None]:
+        """Bind the mailbox to one Herdr-owned local provider process tree.
+
+        The staged broker verifies the kernel's PID birth identity for every
+        client request. The process must already be live before a prompt is sent.
+        """
+
+        if root_pid <= 0:
+            raise ValueError("external provider PID must be positive")
+        process = await asyncio.create_subprocess_exec(
+            *self._broker_argv(),
+            "--standalone",
+            "--external-root-pid",
+            str(root_pid),
+            cwd=self.workspace,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        assert process.stdin is not None
+        assert process.stdout is not None
+        try:
+            process.stdin.write(self.bootstrap(b""))
+            await process.stdin.drain()
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=timeout_seconds)
+            if line.decode("utf-8", errors="replace").rstrip() != self.ready_line:
+                detail = "external provider command broker did not become ready"
+                if process.stderr is not None:
+                    with suppress(TimeoutError):
+                        stderr = await asyncio.wait_for(process.stderr.read(), timeout=0.2)
+                        detail = stderr.decode("utf-8", errors="replace").strip() or detail
+                raise RuntimeError(detail)
+            yield
+        finally:
+            process.stdin.close()
+            with suppress(BrokenPipeError, ConnectionResetError):
+                await process.stdin.wait_closed()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()

@@ -771,6 +771,20 @@ async def _stream_agent_events(
     )
     remote_pass_recorded = False
     supervisor_path: str | None = None
+    if (
+        execution is not None
+        and not execution_host
+        and execution.runtime_id.endswith(".herdr-native.v1")
+        and execution.store.unresolved_herdr_bindings(str(workspace))
+    ):
+        outcome.failed = True
+        yield _sse(
+            AgentEvent(
+                event="error",
+                text="A previous Herdr agent in this stage has not been confirmed closed.",
+            )
+        )
+        return
     if remote_stage is not None:
         try:
             if supervise_remote:
@@ -802,6 +816,36 @@ async def _stream_agent_events(
             request.provider, execution_host
         ).generation
 
+    native_session_origin_cwd: Path | None = None
+    native_session_source_path_sha256: str | None = None
+    if execution is not None and session_id is not None and request.provider == "codex":
+        claim = execution.store.codex_continuation(session_id)
+        if claim is not None:
+            record = execution.store.agent_task(execution.operation_id)
+            if (
+                record is None
+                or record.project_id != claim["project_id"]
+                or record.kind != "project_chat"
+                or record.graph_target.kind != "main"
+                or request.chat_scope != "project"
+                or request.chat_id != claim["chat_id"]
+                or request.node_id is not None
+                or request.run_on != claim["execution_machine"]
+                or request.run_truth_scope != [claim["repository_alias"]]
+                or execution_host
+                or execution.runtime_id != "codex.herdr-native.v1"
+            ):
+                outcome.failed = True
+                yield _sse(
+                    AgentEvent(
+                        event="error",
+                        text="The imported Codex session has a different RCP chat or runtime binding.",
+                    )
+                )
+                return
+            native_session_origin_cwd = Path(claim["source_cwd"])
+            native_session_source_path_sha256 = claim["source_path_sha256"]
+
     async def capture_login_generation() -> None:
         # Read again under the credential gate: a Verify that landed while this
         # launch waited for the gate bumped the generation, and this process runs
@@ -821,6 +865,8 @@ async def _stream_agent_events(
             model=request.model,
             reasoning=request.reasoning,
             session_id=session_id,
+            native_session_origin_cwd=native_session_origin_cwd,
+            native_session_source_path_sha256=native_session_source_path_sha256,
             read_dirs=read_dirs,
             write_dirs=write_dirs,
             write_scope=write_scope,
@@ -844,6 +890,14 @@ async def _stream_agent_events(
         )
     ) as stream:
         async for event in stream:
+            if event.event in {"herdr_binding_start", "herdr_binding_stop"}:
+                if execution is not None:
+                    binding = json.loads(event.text)
+                    if event.event == "herdr_binding_start":
+                        execution.store.begin_herdr_binding(execution.operation_id, binding)
+                    else:
+                        execution.store.finish_herdr_binding(execution.operation_id, binding)
+                continue
             if event.event == "provider_exit":
                 try:
                     evidence = json.loads(event.text)

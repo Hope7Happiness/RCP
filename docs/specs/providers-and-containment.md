@@ -179,6 +179,52 @@ Codex, so a local app-server-created conversation can appear in Codex Desktop.
 That visibility is provider-owned inspection; RCP does not order, take over, or
 coordinate Desktop tasks.
 
+Claude and Codex additionally offer `herdr-native` for local Discuss and Work
+turns when the RCP server itself runs inside a Herdr pane. RCP creates a right
+sibling of that explicit pane without moving focus, clears interactive shell
+aliases and functions that could add permission-bypass flags, then starts a
+real provider interactive agent through Herdr. Its prompt is sent once through
+Herdr's agent API. A Herdr idle or done badge is only presentation state: RCP
+requires the matching user prompt, labelled final answer, and terminal turn
+record in the provider's native session transcript before it records an answer.
+The pane is closed at the end of the RCP attempt, including Stop, so later
+terminal input cannot inherit that attempt's Work authority. RCP persists the pane, named
+agent, native session, and provider process group as task receipts; startup
+reconciles an unfinished binding before interrupting the task. Ambiguous
+identity fails closed. Herdr execution never falls back to a background runtime
+after a prompt may have been delivered.
+
+The Herdr choice requires a local Herdr socket. Claude requires an already
+trusted working directory; its first-use trust prompt blocks native startup,
+which RCP reports before closing the pane. Codex 0.156.0 or newer uses a
+private per-attempt `CODEX_HOME` with only its native login and session store
+linked in. RCP writes trust for the exact task stage and names the same
+permission profile used by its `exec` Work path. On Linux, this home and Codex's
+temporary sandbox helpers use the local `/tmp` directory; an RCP restart closes
+the exact bound pane and removes its recorded temporary home. Codex's first
+native session id is learned from its transcript after prompt delivery; before
+that, the durable pane and process-group binding has no session id. A failure in that
+interval closes the exact pane and never resends the prompt. Remote execution,
+Scratch Patch, Paper, and Orchestrate do not have a Herdr native contract and
+fail explicitly when this runtime is selected. Existing `exec`, `app-server`,
+and `stream-json` paths remain available. The Herdr integration does not treat
+terminal text as Patch authority; the task stage's `patch.json` and ordinary
+Apply path retain that role.
+
+An imported local Codex session can be admitted to one RCP project chat only
+after the original process releases it. RCP binds the original native file,
+its imported prefix, working directory, repository, project, chat, execution
+machine, and main graph target before the first task. The first operation id is
+durable, so retries cannot start a second turn. Ordinary task admission refuses
+an imported session until this explicit handoff and rejects any later change
+to its bound chat or repository. The launcher checks for competing Codex
+processes again before its managed prompt and validates the exact native
+transcript when collecting the structured answer. The old process is never
+reused because its launch flags may bypass RCP's profile. This handoff is
+currently local Linux Codex only; Claude and remote imported sessions have no
+continuation contract. Direct messages in Herdr are displayed as provider
+history and do not acquire a task, mode, answer, or Patch authority.
+
 App-server usage counts the change in `tokenUsage.total` from the same thread's
 pre-turn resume snapshot (zero for a fresh thread) to the active turn's final
 snapshot. `last` covers only one model response, not a whole agent turn. Repeated

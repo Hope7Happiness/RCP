@@ -77,6 +77,10 @@ TRANSFER_EXCLUDED_PROJECT_TABLES = frozenset(
         # Archive and rename are local display choices; a moved project shows
         # every chat under its derived name.
         "chat_display",
+        # Native source paths and live-session claims are local execution
+        # bindings. Transferred provider history remains a sealed source copy.
+        "provider_history_imports",
+        "codex_continuations",
         # Backend handles and job paths remain owned by the source machine.
         "compute_jobs",
         "compute_backend_probes",

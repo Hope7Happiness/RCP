@@ -230,6 +230,16 @@ class ProviderRuntime:
         raise NotImplementedError
 
 
+class _HerdrNativeRuntime(ProviderRuntime):
+    """Native Herdr placement; the launcher consumes its provider transcript."""
+
+    def __init__(self, runtime_id: str) -> None:
+        self.id = runtime_id
+
+    def turn(self, request: ProviderTurnRequest) -> ProviderTurn:
+        raise ValueError("Herdr native turns must use the Herdr launch path.")
+
+
 class _JsonlProviderTurn(ProviderTurn):
     requires_protocol_completion = True
 
@@ -576,7 +586,7 @@ class ProviderProfile:
         """Preferred runtime followed by its safe pre-prompt fallback, if any."""
 
         preferred = self.runtime(self.configured_runtime_id(configured))
-        if preferred.id == self.legacy_runtime_id:
+        if preferred.id == self.legacy_runtime_id or isinstance(preferred, _HerdrNativeRuntime):
             return (preferred,)
         return (preferred, self.runtime(self.legacy_runtime_id))
 
@@ -658,12 +668,15 @@ class CodexProfile(ProviderProfile):
         "exec": legacy_runtime_id,
         "exec-json": legacy_runtime_id,
         "app-server": "codex.app-server-stdio.v1",
+        "herdr-native": "codex.herdr-native.v1",
         legacy_runtime_id: legacy_runtime_id,
         "codex.app-server-stdio.v1": "codex.app-server-stdio.v1",
+        "codex.herdr-native.v1": "codex.herdr-native.v1",
     }
     runtime_choices = (
         ProviderRuntimeChoice(id="exec", label="Codex exec"),
         ProviderRuntimeChoice(id="app-server", label="Codex app server"),
+        ProviderRuntimeChoice(id="herdr-native", label="Codex in Herdr (local preview)"),
     )
     work_like_minimum_version = (0, 138, 0)
 
@@ -676,6 +689,8 @@ class CodexProfile(ProviderProfile):
             from rcp.agents.codex_app_server import CodexAppServerRuntime
 
             return CodexAppServerRuntime()
+        if runtime_id == "codex.herdr-native.v1":
+            return _HerdrNativeRuntime(runtime_id)
         return super().runtime(runtime_id)
 
     def auth_command(self, binary: str) -> list[str]:
@@ -1004,9 +1019,14 @@ class ClaudeProfile(ProviderProfile):
     default_runtime = "stream-json"
     runtime_aliases = {
         "stream-json": legacy_runtime_id,
+        "herdr-native": "claude.herdr-native.v1",
         legacy_runtime_id: legacy_runtime_id,
+        "claude.herdr-native.v1": "claude.herdr-native.v1",
     }
-    runtime_choices = (ProviderRuntimeChoice(id="stream-json", label="Claude stream JSON"),)
+    runtime_choices = (
+        ProviderRuntimeChoice(id="stream-json", label="Claude stream JSON"),
+        ProviderRuntimeChoice(id="herdr-native", label="Claude in Herdr (local preview)"),
+    )
     work_like_minimum_version = (2, 1, 233)
     #: Only the model aliases are declared; `declared_against` dates them alone.
     declared_against = "2.1.267"
@@ -1038,6 +1058,8 @@ class ClaudeProfile(ProviderProfile):
         return "401" in reported and ("authenticate" in reported or "oauth" in reported)
 
     def runtime(self, runtime_id: str) -> ProviderRuntime:
+        if runtime_id == "claude.herdr-native.v1":
+            return _HerdrNativeRuntime(runtime_id)
         if runtime_id == self.legacy_runtime_id:
             return _ClaudeStreamRuntime()
         return super().runtime(runtime_id)

@@ -21,6 +21,7 @@ from rcp.storage.experiments import ExperimentStoreMixin
 from rcp.storage.models import *  # noqa: F401,F403
 from rcp.storage.models import __all__ as _model_names
 from rcp.storage.projects import ProjectStoreMixin
+from rcp.storage.provider_history import ProviderHistoryStoreMixin
 from rcp.storage.provider_logins import ProviderLoginStoreMixin
 from rcp.storage.provisioning import ProjectProvisioningStoreMixin
 from rcp.storage.restore_detachment import RestoreDetachmentStoreMixin
@@ -35,6 +36,7 @@ class AppStore(
     ProviderLoginStoreMixin,
     ComputeJobStoreMixin,
     ChatDisplayStoreMixin,
+    ProviderHistoryStoreMixin,
     ConversationWorktreeStoreMixin,
     ArtifactRevisionStoreMixin,
     ProjectTransferStoreMixin,

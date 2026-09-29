@@ -429,6 +429,12 @@ class ProjectStoreMixin:
                     "chat_display": connection.execute(
                         "DELETE FROM chat_display WHERE project_id = ?", (project_id,)
                     ).rowcount,
+                    "provider_history_imports": connection.execute(
+                        "DELETE FROM provider_history_imports WHERE project_id = ?", (project_id,)
+                    ).rowcount,
+                    "codex_continuations": connection.execute(
+                        "DELETE FROM codex_continuations WHERE project_id = ?", (project_id,)
+                    ).rowcount,
                     "conversation_worktrees": connection.execute(
                         "DELETE FROM conversation_worktrees WHERE project_id = ?", (project_id,)
                     ).rowcount,
@@ -1003,6 +1009,14 @@ class ProjectStoreMixin:
             )
             connection.execute(
                 "UPDATE chat_display SET project_id = ? WHERE project_id = ?",
+                (project_id, legacy_id),
+            )
+            connection.execute(
+                "UPDATE provider_history_imports SET project_id = ? WHERE project_id = ?",
+                (project_id, legacy_id),
+            )
+            connection.execute(
+                "UPDATE codex_continuations SET project_id = ? WHERE project_id = ?",
                 (project_id, legacy_id),
             )
             connection.execute(

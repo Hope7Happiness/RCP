@@ -1,6 +1,8 @@
 # Active implementation handoffs
 
-None.
+- [Herdr session continuation and message sync](herdr-session-continuation.md):
+  RCP-managed visible turns are implemented; imported sessions still need a
+  controlled takeover and a display-only inbound sync contract.
 
 Earlier on 2026-09-26 every open handoff was closed: ten had shipped their code,
 and the refusal-explains-itself handoff (a refused dispatch or Apply reported
@@ -45,5 +47,11 @@ stands in for it. Run one on disposable data, then delete its line here.
 - Pushes: the live team-space push run and real remote-machine SSH.
 - Phone UI: the real-iPhone journey and its screenshot review.
 - Runs loading: the team-server measurement of first open against the 2 s target.
+- Herdr native Claude: on disposable RCP data and a disposable project directory
+  already trusted by Claude, drive a Discuss answer and a Work patch through the
+  served app, then Stop and restart during a second turn; inspect the visible
+  agent pane, task receipts, broker boundary, and pane cleanup. An untrusted
+  directory triggers Claude's interactive trust prompt before RCP can bind the
+  provider process, so the first-use path needs a separate product decision.
 - Update notices: a `publish-desktop.yml` rerun after a failed upload; in the
   prebuilt app, the Download button, quit and reopen, and a team connection.

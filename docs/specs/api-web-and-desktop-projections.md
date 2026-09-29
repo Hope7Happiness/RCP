@@ -68,6 +68,27 @@ session expiry and metadata are owned by
 
 ## API composition and mutation boundary
 
+The personal-project provider-history routes list imported Codex sessions,
+return bounded message pages, and import or refresh one exact local native
+session by UUID. Import uses project write admission and verifies that the
+source is inside configured Codex roots and belongs to one local project
+repository. The Agents list counts these imports separately and opens a
+provider-history detail. Its source-status route checks appended bytes without
+reading the whole transcript; while the detail is visible, Web polls every
+20 seconds and refreshes changed snapshots. Project Settings offers manual
+import and refresh controls. These observations never dispatch a task.
+
+The Agents detail also has an explicit Discuss/Work composer for a local
+imported Codex session. `POST /api/projects/{project_id}/provider-history/codex/{session_id}/continue`
+accepts `{message, mode}` and returns the durable `chat_id` and ordinary task
+projection. It requires a personal project, Codex `herdr-native` project chat,
+an available original session, and exact local repository binding. A conflicting
+live pane or process returns 409 with a reason. A duplicate first request
+returns the same task. The browser then opens the ordinary chat; its subsequent
+turns use the usual task route and permission controls. Team and remote-project
+imports or continuations are refused. The imported transcript remains labelled
+history, even when its native session is also owned by an RCP chat.
+
 One FastAPI backend serves the JSON API and, when built, the React/Vite
 application. The optional Tauri shell starts or reuses that same backend. There
 is no second team protocol or frontend-owned background-worker runtime.
@@ -1093,6 +1114,13 @@ Provider naming is a backend answer. Readiness exports each provider's runtime
 choices and its default, and a task and a Paper writing session each export the
 label for the runtime they ran on, so no surface maps a durable runtime id or
 picks a default itself.
+The Claude `herdr-native` choice is available in the same profile selector;
+the backend enforces its local Discuss/Work and Herdr-pane prerequisites at
+launch. The browser continues to display the ordinary task, session, answer,
+and result projections. A visible Herdr pane is an additional interaction
+surface, not a substitute for those records or for a provider completion
+receipt. Unsupported capabilities and missing Herdr context receive a task
+error rather than an implicit runtime change.
 
 The browser may stage human drafts and render backend projections; it is not the
 owner of authority, tasks, graph rules, provider authentication, watcher

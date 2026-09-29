@@ -39,6 +39,32 @@ but RCP never reads, indexes, copies, projects, validates, or authorizes from
 prior RCP transcript text. Provider-native session continuation may retain the
 provider's context without making the displayed transcript an RCP input.
 
+In a personal local project, a human may explicitly import one Codex native
+session by its UUID from the configured local Codex log roots. The source's
+native session id and working directory must match exactly one repository in
+that project. RCP stores a bounded snapshot of user and assistant text in its
+SQLite app data, including Codex's commentary/final labels, and shows it as
+read-only provider history in the Agents list and Project Settings. Reimporting
+the same source is idempotent and refreshes the snapshot when new records
+appear. While its Agents detail is visible, RCP checks the source size every
+20 seconds and refreshes appended messages; the human can also refresh it.
+This observation does not convert old messages into RCP turns, answers, or
+graph authority.
+
+A human can explicitly continue this imported Codex session from Agents in
+Discuss or Work. The personal, local project must select Codex `herdr-native`
+for project chat, the original repository must remain in project truth scope,
+and its old Codex process must have exited. RCP checks the original file prefix,
+working directory, repository, and active process identity before claiming the
+native session for one project chat. It then starts a controlled Herdr pane with
+the same native session id and current RCP permission profile. A live old pane
+returns a conflict naming that pane; RCP never injects a Work prompt into it.
+The first task and chat binding survive restart and duplicate dispatch. Later
+turns use the ordinary chat composer and remain pinned to the original
+repository. Direct Herdr messages still appear only as provider history, not
+as RCP task turns. A separate RCP turn never consumes displayed history text
+as task authority; the provider's own native session retains its context.
+
 The first ordinary turn in an RCP-owned native session receives one master
 context. It supplies shared project context once: the current graph target and
 head, focused node, exact run-scope repository pointers, enabled-package
@@ -152,6 +178,11 @@ attempt, because a follow-up uses that attempt's captured mode. A turn that
 cannot receive input leaves the toggle available for the next ordinary turn.
 Episode workers cannot be steered; the human continues to message their orchestrator
 through the episode's ordinary mail path.
+Herdr native turns accept the initial RCP prompt in the visible provider pane,
+but do not offer an RCP composer steer during an active attempt. The human may
+inspect the pane; extra direct terminal input is outside the captured RCP turn
+and cannot supply its structured answer or graph patch. The native turn's
+captured capability and stage still govern its task result.
 
 Each steer is stored as the human's chat message with its addressed task attempt
 and a **delivered**, **refused**, or **unknown** receipt. A delivered receipt is

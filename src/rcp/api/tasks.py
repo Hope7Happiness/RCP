@@ -278,6 +278,37 @@ def start_agent_task(
     result_view_keep_locks: ResultViewKeepLocksDependency,
     branch_id: str | None = None,
 ) -> dict[str, object]:
+    return _start_agent_task(
+        project_id,
+        kind,
+        body,
+        http_request,
+        catalog=catalog,
+        store=store,
+        identity_access=identity_access,
+        attachment_store=attachment_store,
+        background_tasks=background_tasks,
+        result_view_keep_locks=result_view_keep_locks,
+        branch_id=branch_id,
+        operation_id_override=None,
+    )
+
+
+def _start_agent_task(
+    project_id: str,
+    kind: AgentTaskKind,
+    body: dict[str, object],
+    http_request: Request,
+    *,
+    catalog: ProjectCatalog,
+    store: AppStore,
+    identity_access: IdentityAccess,
+    attachment_store: ChatAttachmentStore,
+    background_tasks: BackgroundAgentTasks,
+    result_view_keep_locks: KeyedLocks,
+    branch_id: str | None,
+    operation_id_override: str | None,
+) -> dict[str, object]:
     if kind in {"auto_research", "branch_merge", "episode_report"}:
         raise HTTPException(
             status_code=405,
@@ -328,7 +359,7 @@ def start_agent_task(
             assert request.chat_id is not None
             chat_admission_lock = admit_fresh_chat_turn(service, store, project_id, request)
             request = chat_admission_lock.__enter__()
-        operation_id = str(uuid.uuid4())
+        operation_id = operation_id_override or str(uuid.uuid4())
         claimed_set: tuple[str, str] | None = None
         if kind in {"node_chat", "project_chat"}:
             assert isinstance(request, RunRequest)

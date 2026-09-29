@@ -23,6 +23,7 @@ import { api, clearAllProjectCaches, clearProjectCaches } from "../api";
 import { computeProbePresentation } from "../compute";
 import { ProjectMembers } from "../components/ProjectMembers";
 import { ProviderLogins } from "../components/ProviderLogins";
+import { ProviderHistory } from "../components/ProviderHistory";
 import { ServerSettings } from "../components/ServerSettings";
 import { EMPTY_SKILL_SELECTION } from "../skillPicker";
 import { AgentConfigControls, profileRunConfig } from "../components/AgentConfigControls";
@@ -847,6 +848,9 @@ export function ProjectSettings({
         writesDisabled={writesDisabled}
         onLoginChanged={() => void onRefreshReadiness().catch(() => {})}
       />
+      {spaceKind === "personal" ? (
+        <ProviderHistory apiBase={apiBase} writesDisabled={writesDisabled} />
+      ) : null}
 
       <section className="settings-section compute-settings">
         <header>

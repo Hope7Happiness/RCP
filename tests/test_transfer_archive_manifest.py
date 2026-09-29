@@ -82,6 +82,8 @@ PROJECT_LINKED_TABLES = {
     "auto_research_messages",
     "auto_research_recoveries",
     "chat_display",
+    "provider_history_imports",
+    "codex_continuations",
     "chat_session_contexts",
     "compute_jobs",
     "compute_backend_probes",

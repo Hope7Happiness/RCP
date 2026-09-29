@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import secrets
 from pathlib import Path
 
 import pytest
@@ -106,3 +108,21 @@ async def test_broker_exit_race_does_not_replace_bootstrap_failure(
     assert process.stdin.wait_closed_calls == 1
     assert process.wait_calls == 2
     assert process.kill_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_external_provider_broker_lives_only_for_bound_process(tmp_path: Path) -> None:
+    mailbox_id = secrets.token_hex(16)
+    socket_path = f"/tmp/rcp-command-{mailbox_id}.sock"
+    broker_path = Path(__file__).resolve().parents[1] / "src/rcp/agents/staged_command_broker.py"
+    gate = ProviderInvocationGate(
+        mailbox_id=mailbox_id,
+        broker_path=str(broker_path),
+        socket_path=socket_path,
+        workspace=str(tmp_path),
+        response_timeout_seconds=2.0,
+        _token=secrets.token_hex(32),
+    )
+    async with gate.serve_external_provider(os.getpid()):
+        assert Path(socket_path).is_socket()
+    assert not Path(socket_path).exists()

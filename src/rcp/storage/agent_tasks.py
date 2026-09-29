@@ -96,6 +96,8 @@ _PROTECTED_AGENT_TASK_RECEIPT_CATEGORIES = (
     "compute_command_result",
     "remote_provider_started",
     "remote_provider_stopped",
+    "herdr_binding_start",
+    "herdr_binding_stop",
 )
 _PROTECTED_AGENT_TASK_RECEIPT_PLACEHOLDERS = ", ".join(
     "?" for _category in _PROTECTED_AGENT_TASK_RECEIPT_CATEGORIES
@@ -187,6 +189,7 @@ class AgentTaskStoreMixin:
                 connection.execute("BEGIN IMMEDIATE")
                 if continuation_cause == "fresh":
                     self._require_project_accepts_new_work(connection, record.project_id)
+                self._require_codex_continuation_task(connection, record)
                 if self._has_active_chat_overlap(connection, record):
                     raise AgentTaskAdmissionConflict(
                         "Another task is already active in this conversation."
@@ -2503,6 +2506,105 @@ class AgentTaskStoreMixin:
         """Return passes whose remote process group has not been confirmed absent."""
         with self.connection() as connection:
             return self._unresolved_remote_provider_passes(connection, stage_host, stage_root)
+
+    def unresolved_herdr_bindings(
+        self, stage_root: str | None = None
+    ) -> list[tuple[str, dict[str, object]]]:
+        """Return durable native panes whose closure has not been confirmed."""
+
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT started.operation_id, started.payload_json
+                FROM graph_run_receipts AS started
+                WHERE started.category = 'herdr_binding_start'
+                  AND (? IS NULL OR json_extract(started.payload_json, '$.stage_root') = ?)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM graph_run_receipts AS stopped
+                      WHERE stopped.category = 'herdr_binding_stop'
+                        AND stopped.operation_id = started.operation_id
+                        AND json_extract(stopped.payload_json, '$.pane_id') =
+                            json_extract(started.payload_json, '$.pane_id')
+                  )
+                ORDER BY started.receipt_id
+                """,
+                (stage_root, stage_root),
+            ).fetchall()
+        return [(str(row["operation_id"]), json.loads(row["payload_json"])) for row in rows]
+
+    def begin_herdr_binding(self, operation_id: str, binding: dict[str, object]) -> None:
+        stage_root = binding.get("stage_root")
+        if not isinstance(stage_root, str) or not stage_root.startswith("/"):
+            raise ValueError("A Herdr binding requires an absolute stage root.")
+        if not isinstance(binding.get("pane_id"), str):
+            raise ValueError("A Herdr binding requires its exact pane ID.")
+        payload = self._bounded_receipt_payload(binding)
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            conflict = connection.execute(
+                """
+                SELECT 1 FROM graph_run_receipts AS started
+                WHERE started.category = 'herdr_binding_start'
+                  AND json_extract(started.payload_json, '$.stage_root') = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM graph_run_receipts AS stopped
+                      WHERE stopped.category = 'herdr_binding_stop'
+                        AND stopped.operation_id = started.operation_id
+                        AND json_extract(stopped.payload_json, '$.pane_id') =
+                            json_extract(started.payload_json, '$.pane_id')
+                  )
+                LIMIT 1
+                """,
+                (stage_root,),
+            ).fetchone()
+            if conflict is not None:
+                raise ValueError(
+                    "A previous Herdr agent in this stage has not been confirmed closed."
+                )
+            self._insert_agent_task_receipt(
+                connection,
+                operation_id,
+                "herdr_binding_start",
+                payload,
+                tier="summary",
+                created_at=self.now(),
+            )
+
+    def finish_herdr_binding(self, operation_id: str, binding: dict[str, object]) -> None:
+        pane_id = binding.get("pane_id")
+        if not isinstance(pane_id, str):
+            raise ValueError("A Herdr stop requires its exact pane ID.")
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            started = connection.execute(
+                """
+                SELECT payload_json FROM graph_run_receipts
+                WHERE operation_id = ? AND category = 'herdr_binding_start'
+                  AND json_extract(payload_json, '$.pane_id') = ?
+                ORDER BY receipt_id DESC LIMIT 1
+                """,
+                (operation_id, pane_id),
+            ).fetchone()
+            if started is None:
+                raise ValueError("Herdr pane has no matching start receipt.")
+            stopped = connection.execute(
+                """
+                SELECT 1 FROM graph_run_receipts
+                WHERE operation_id = ? AND category = 'herdr_binding_stop'
+                  AND json_extract(payload_json, '$.pane_id') = ?
+                LIMIT 1
+                """,
+                (operation_id, pane_id),
+            ).fetchone()
+            if stopped is None:
+                self._insert_agent_task_receipt(
+                    connection,
+                    operation_id,
+                    "herdr_binding_stop",
+                    started["payload_json"],
+                    tier="summary",
+                    created_at=self.now(),
+                )
 
     def begin_remote_provider_pass(
         self,

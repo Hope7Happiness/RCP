@@ -4781,6 +4781,11 @@ export default function App() {
               onRepairGraphUpdate={repairGraphUpdate}
               onStopWatcher={(watcherId) => void stopWatcher(watcherId)}
               onRemoveDraft={discardDraft}
+              onContinueImported={(result) => {
+                recordStartedTask(result.task);
+                selectListedConversation(result.chat_id);
+                setNotice(null);
+              }}
               onNewSession={(conversation) => {
                 const node = conversation.nodeId
                   ? (presentedGraph.nodes[conversation.nodeId] ?? null)

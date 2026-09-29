@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   Ellipsis,
   ChevronDown,
   LoaderCircle,
@@ -32,12 +33,14 @@ import type {
   ChatDisplay,
   ChatTranscript,
   GraphNode,
+  ImportedHistorySummary,
   ProjectSnapshot,
   StartAgentTask,
   WatcherRecord,
 } from "../types";
-import { loadChatDisplay, setChatArchived, setChatTitle } from "../api";
+import { api, loadChatDisplay, setChatArchived, setChatTitle } from "../api";
 import { NodeChat } from "../components/NodeChat";
+import { ProviderHistory, type ImportedContinuation } from "../components/ProviderHistory";
 import { useNarrowViewport } from "../hooks/useNarrowViewport";
 
 interface Props {
@@ -67,6 +70,7 @@ interface Props {
   onStopWatcher?: (watcherId: string) => void;
   onNewSession: (conversation: ChatConversation) => void;
   onRemoveDraft: (chatId: string) => void;
+  onContinueImported: (result: ImportedContinuation) => Promise<void> | void;
 }
 
 function chatListWidthStorageKey(projectId: string): string {
@@ -98,7 +102,7 @@ function readChatListCollapsed(projectId: string): boolean {
   }
 }
 
-type AgentFilter = "all" | "needs_you" | "working" | "archived";
+type AgentFilter = "all" | "needs_you" | "working" | "imported" | "archived";
 
 const EMPTY_CHAT_DISPLAY: ChatDisplay = { archived: [], titles: {} };
 
@@ -167,6 +171,7 @@ export function ChatsWorkspace({
   onStopWatcher,
   onNewSession,
   onRemoveDraft,
+  onContinueImported,
 }: Props) {
   const narrow = useNarrowViewport();
   const [mobileListOpen, setMobileListOpen] = useState(false);
@@ -180,6 +185,9 @@ export function ChatsWorkspace({
   const workspace = useRef<HTMLElement>(null);
   const apiBase = `/api/projects/${encodeURIComponent(project.id)}`;
   const [display, setDisplay] = useState<ChatDisplay>(EMPTY_CHAT_DISPLAY);
+  const [importedSessions, setImportedSessions] = useState<ImportedHistorySummary[]>([]);
+  const [importedError, setImportedError] = useState<string | null>(null);
+  const [selectedImportedSessionId, setSelectedImportedSessionId] = useState<string | null>(null);
   const archivedChatIds = useMemo(() => new Set(display.archived), [display.archived]);
   // A human-given name replaces the derived one everywhere in this workspace.
   const conversations = useMemo(
@@ -201,6 +209,11 @@ export function ChatsWorkspace({
   // Count every archived chat, including ones on pages not loaded yet; the
   // Archived view pages through them with Load more.
   const archivedCount = archivedChatIds.size;
+  const importedMatches = importedSessions.filter((item) =>
+    `${item.repository_alias} ${item.session_id} Codex imported history`
+      .toLocaleLowerCase()
+      .includes(query.toLocaleLowerCase()),
+  );
   const groups = groupConversationAgents(listed, unreadTaskIds, query);
   const activeGroups = showingArchived
     ? groupConversationAgents(
@@ -217,6 +230,37 @@ export function ChatsWorkspace({
     conversations.find((conversation) => conversation.chatId === selectedChatId) ??
     conversations[0] ??
     null;
+  const activeImportedSessionId =
+    selectedImportedSessionId ?? (selected ? null : (importedSessions[0]?.session_id ?? null));
+  const activeImportedChatId = tasks.find(
+    (task) =>
+      task.native_session_id === activeImportedSessionId &&
+      task.kind === "project_chat" &&
+      !task.history_only,
+  )?.request.chat_id;
+  const filterOptions: AgentFilter[] = ["all", "needs_you", "working"];
+  if (importedSessions.length > 0) filterOptions.push("imported");
+  if (archivedCount > 0 || showingArchived) filterOptions.push("archived");
+
+  useEffect(() => {
+    let current = true;
+    setImportedSessions([]);
+    setImportedError(null);
+    api<ImportedHistorySummary[]>(`${apiBase}/provider-history`)
+      .then((items) => {
+        if (current) setImportedSessions(items);
+      })
+      .catch((failure) => {
+        if (current) setImportedError(failure instanceof Error ? failure.message : String(failure));
+      });
+    return () => {
+      current = false;
+    };
+  }, [apiBase]);
+
+  useEffect(() => {
+    setSelectedImportedSessionId(null);
+  }, [selectedChatId, project.id]);
 
   // Every read or edit of the display set returns the whole set, so only the
   // latest request's answer may apply; a project switch starts a new request.
@@ -408,7 +452,7 @@ export function ChatsWorkspace({
       </button>
       <aside
         className="conversation-list"
-        aria-label="Project conversations"
+        aria-label="Project agents and imported history"
         hidden={narrow ? !mobileListOpen : listCollapsed}
         id="conversation-list-panel"
       >
@@ -437,18 +481,18 @@ export function ChatsWorkspace({
             </label>
           </div>
           <div className="agent-list-filters" role="group" aria-label="Filter agents">
-            {(archivedCount > 0 || showingArchived
-              ? (["all", "needs_you", "working", "archived"] as const)
-              : (["all", "needs_you", "working"] as const)
-            ).map((value) => {
+            {filterOptions.map((value) => {
               const count =
                 value === "archived"
                   ? archivedCount
-                  : value === "all"
-                    ? activeGroups.needs_you.length +
-                      activeGroups.working.length +
-                      activeGroups.recent.length
-                    : activeGroups[value].length;
+                  : value === "imported"
+                    ? importedMatches.length
+                    : value === "all"
+                      ? activeGroups.needs_you.length +
+                        activeGroups.working.length +
+                        activeGroups.recent.length +
+                        importedMatches.length
+                      : activeGroups[value].length;
               return (
                 <button
                   type="button"
@@ -461,7 +505,9 @@ export function ChatsWorkspace({
                     ? "All"
                     : value === "archived"
                       ? "Archived"
-                      : GROUP_LABELS[value]}{" "}
+                      : value === "imported"
+                        ? "Imported"
+                        : GROUP_LABELS[value]}{" "}
                   <span>{count}</span>
                 </button>
               );
@@ -473,7 +519,12 @@ export function ChatsWorkspace({
             {archiveError}
           </p>
         )}
-        <div role="listbox" aria-label="Conversations">
+        {importedError && (
+          <p className="agent-list-error" role="alert">
+            {importedError}
+          </p>
+        )}
+        <div role="listbox" aria-label="Agent conversations and imported history">
           {visibleGroups.map((group) =>
             groups[group].length === 0 ? null : (
               <div
@@ -488,7 +539,8 @@ export function ChatsWorkspace({
                   <span>{groups[group].length}</span>
                 </div>
                 {groups[group].map(({ conversation, status }) => {
-                  const selectedConversation = conversation.chatId === selected?.chatId;
+                  const selectedConversation =
+                    !activeImportedSessionId && conversation.chatId === selected?.chatId;
                   const unread = status.state === "unread";
                   const latest = status.latest;
                   const draft = conversation.tasks.length === 0 && !conversation.updatedAt;
@@ -537,6 +589,7 @@ export function ChatsWorkspace({
                           data-state={status.state}
                           title={conversation.title}
                           onClick={() => {
+                            setSelectedImportedSessionId(null);
                             onSelect(conversation.chatId);
                             if (narrow) setMobileListOpen(false);
                           }}
@@ -634,6 +687,52 @@ export function ChatsWorkspace({
               </div>
             ),
           )}
+          {!showingArchived &&
+            (filter === "all" || filter === "imported") &&
+            importedMatches.length > 0 && (
+              <div
+                className="agent-group"
+                role="group"
+                aria-label="Imported history"
+                data-group="imported"
+              >
+                <div className="agent-group-heading" aria-hidden="true">
+                  <span>Imported history</span>
+                  <span>{importedMatches.length}</span>
+                </div>
+                {importedMatches.map((item) => {
+                  const active = item.session_id === activeImportedSessionId;
+                  return (
+                    <div className="agent-row" key={item.session_id}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        aria-current={active ? "page" : undefined}
+                        aria-label={`Imported Codex session ${item.session_id}`}
+                        className={active ? "active" : ""}
+                        title={item.session_id}
+                        onClick={() => {
+                          setSelectedImportedSessionId(item.session_id);
+                          if (narrow) setMobileListOpen(false);
+                        }}
+                      >
+                        <span className="agent-row-icon">
+                          <BookOpen size={13} aria-hidden="true" />
+                        </span>
+                        <span className="agent-row-body">
+                          <span className="agent-row-title">Codex · {item.repository_alias}</span>
+                          <span className="agent-row-meta">
+                            Imported · {item.message_count} messages
+                          </span>
+                        </span>
+                        <time>{sinceLabel(item.last_timestamp, now)}</time>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
         </div>
         {hasMore && (
           <footer className="conversation-list-more">
@@ -708,7 +807,30 @@ export function ChatsWorkspace({
             <PanelLeft size={15} />
           </button>
         )}
-        {selected ? (
+        {activeImportedSessionId ? (
+          <ProviderHistory
+            key={activeImportedSessionId}
+            apiBase={apiBase}
+            sessionId={activeImportedSessionId}
+            writesDisabled={graphChangesDisabled}
+            continuedChatId={activeImportedChatId ?? undefined}
+            onOpenContinuedChat={() => {
+              if (activeImportedChatId) {
+                setSelectedImportedSessionId(null);
+                onSelect(activeImportedChatId);
+              }
+            }}
+            onImported={(saved) =>
+              setImportedSessions((current) =>
+                current.map((item) => (item.session_id === saved.session_id ? saved : item)),
+              )
+            }
+            onContinued={async (result) => {
+              setSelectedImportedSessionId(null);
+              await onContinueImported(result);
+            }}
+          />
+        ) : selected ? (
           <NodeChat
             key={selected.chatId}
             project={project}
@@ -718,7 +840,12 @@ export function ChatsWorkspace({
             conversationTitle={selected.kind === "node_chat" ? selected.title : undefined}
             header={conversationHeading}
             headerState={selectedStatus?.state}
-            runScope={runScope}
+            runScope={
+              selectedLatest?.native_session_id &&
+              importedSessions.some((item) => item.session_id === selectedLatest.native_session_id)
+                ? (selectedLatest.request.run_truth_scope ?? runScope)
+                : runScope
+            }
             tasks={tasks}
             watchers={watchers}
             historyMessages={chatTranscripts.get(selected.chatId)?.messages}

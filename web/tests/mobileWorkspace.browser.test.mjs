@@ -31,6 +31,9 @@ test("narrow Chats and DAG keep the working surface primary behind accessible di
       await page.route("**/api/projects/*/chat-display", (route) =>
         route.fulfill({ json: { archived: [], titles: {} } }),
       );
+      await page.route("**/api/projects/*/provider-history", (route) =>
+        route.fulfill({ json: [] }),
+      );
       await page.route("**/api/projects/fixture/graph-edit-options", (route) =>
         route.fulfill({ json: { node_prefixes: {}, relations: [] } }),
       );

@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -496,6 +497,7 @@ class BackgroundAgentTasks:
         """
 
         self._require_startup_effects_open("startup recovery")
+        self._reconcile_herdr_bindings()
         with self._controls_lock:
             self._shutdown_requested = False
             self._transport_retry_closed = False
@@ -513,6 +515,67 @@ class BackgroundAgentTasks:
         restart_interrupted_episode_reports(self)
         self._rearm_owed_transport_retries()
         self._schedule_remote_reconciliation(delay=0)
+
+    def _reconcile_herdr_bindings(self) -> None:
+        """Stop exact previously owned native panes before interrupting tasks."""
+
+        bindings = self.store.unresolved_herdr_bindings()
+        if not bindings:
+            return
+
+        async def reconcile(operation_id: str, binding: dict[str, object]) -> None:
+            from rcp.agents.herdr_bridge import (
+                HerdrBridgeError,
+                HerdrNativeAdapter,
+                HerdrNativeAgent,
+                cleanup_isolated_codex_home,
+            )
+
+            pane_id = binding.get("pane_id")
+            provider = binding.get("provider")
+            name = binding.get("agent_name")
+            session_id = binding.get("native_session_id")
+            group_id = binding.get("process_group_id")
+            if not all(isinstance(value, str) and value for value in (pane_id, provider, name)):
+                raise ValueError("An unfinished Herdr binding has malformed identity.")
+            if session_id is not None and (not isinstance(session_id, str) or not session_id):
+                raise ValueError("An unfinished Herdr binding has malformed session identity.")
+            if provider not in {"codex", "claude"} or not isinstance(group_id, int):
+                raise ValueError("An unfinished Herdr binding has malformed process identity.")
+            adapter = HerdrNativeAdapter()
+            agent = HerdrNativeAgent(pane_id, provider, name)
+            try:
+                observation = await adapter.get(agent)
+            except HerdrBridgeError:
+                if await adapter.pane_present(pane_id):
+                    raise ValueError(
+                        "An unfinished Herdr pane still exists but its agent identity changed."
+                    ) from None
+            else:
+                if session_id is not None and observation.session_id not in (None, session_id):
+                    raise ValueError("An unfinished Herdr pane changed native session.")
+                identity = await adapter.process_info(agent)
+                if identity.foreground_process_group_id != group_id:
+                    raise ValueError("An unfinished Herdr pane changed provider process.")
+                await adapter.close(agent)
+            codex_home = binding.get("codex_home")
+            if codex_home is not None:
+                if provider != "codex" or not isinstance(codex_home, str):
+                    raise ValueError("An unfinished Herdr binding has malformed Codex home.")
+                cleanup_isolated_codex_home(codex_home)
+            self.store.finish_herdr_binding(operation_id, binding)
+
+        def run() -> None:
+            async def all_bindings() -> None:
+                for operation_id, binding in bindings:
+                    await reconcile(operation_id, binding)
+
+            asyncio.run(all_bindings())
+
+        # Startup runs inside the app lifespan event loop. The socket client is
+        # async, so reconcile in one worker thread and fail startup on ambiguity.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(run).result()
 
     def start(
         self,
