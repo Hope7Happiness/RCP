@@ -215,9 +215,13 @@ An imported local Codex session can be admitted to one RCP project chat only
 after the original process releases it. RCP binds the original native file,
 its imported prefix, working directory, repository, project, chat, execution
 machine, and main graph target before the first task. The first operation id is
-durable, so retries cannot start a second turn. Ordinary task admission refuses
-an imported session until this explicit handoff and rejects any later change
-to its bound chat or repository. The launcher checks for competing Codex
+durable, so duplicate first-turn requests cannot start a second task. A failed
+task may be retried only with the original native session and retained stage;
+if those are unavailable, Retry refuses a fresh-session fallback. The human
+can start a new, explicitly authorized turn from the bound RCP chat after
+resolving the session. Ordinary task admission refuses an imported session
+until this explicit handoff and rejects any later change to its bound chat or
+repository. The launcher checks for competing Codex
 processes again before its managed prompt and validates the exact native
 transcript when collecting the structured answer. The old process is never
 reused because its launch flags may bypass RCP's profile. This handoff is

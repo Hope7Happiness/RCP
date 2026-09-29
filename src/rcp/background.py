@@ -854,6 +854,15 @@ class BackgroundAgentTasks:
                 stage_root=previous.stage_root,
                 authorized_by=authorized_by,
             )
+        if (
+            previous.native_session_id
+            and self.store.codex_continuation(previous.native_session_id) is not None
+        ):
+            raise ValueError(
+                "This imported Codex chat is bound to its original native session. "
+                "Retry cannot start a fresh session; resolve the saved session and "
+                "continue from its RCP chat."
+            )
         estimate, samples = self.store.agent_task_estimate(
             previous.project_id,
             previous.kind,

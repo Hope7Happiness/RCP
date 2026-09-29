@@ -7,9 +7,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from rcp.agents import AgentEvent
 from rcp.provider_history import read_codex_history, reprove_codex_history
 
-from .helpers import create_named_app
+from .helpers import create_named_app, wait_for_task_response
 
 
 def _session_file(manifest, session_id: str, *, cwd: str | None = None) -> Path:
@@ -308,3 +309,49 @@ def test_codex_continuation_refuses_live_external_pane(manifest, tmp_path, monke
         assert response.status_code == 409
         assert "wP:p42" in response.text
         assert app.state.background_tasks.store.codex_continuation(session_id) is None
+
+
+def test_imported_codex_retry_refuses_fresh_session_fallback(manifest, tmp_path, monkeypatch):
+    session_id = str(uuid.uuid4())
+    _session_file(manifest, session_id)
+    app = create_named_app(str(manifest.path), data_dir=tmp_path / "data")
+    project_id = app.state.default_project_id
+    service = app.state.service
+    surfaces = ("seed", "refresh", "node_chat", "project_chat", "paper_coach")
+    profiles = {surface: service.manifest.agent_profile(surface) for surface in surfaces}
+    profiles["project_chat"] = profiles["project_chat"].model_copy(
+        update={"runtime": "herdr-native"}
+    )
+    service.history.update_agent_settings(service.manifest.agent.default_run_truth_scope, profiles)
+    monkeypatch.setattr(
+        "rcp.agents.herdr_bridge.require_codex_session_quiescent",
+        lambda *_args: None,
+    )
+    stage = tmp_path / "stage"
+    stage.mkdir()
+
+    async def failed_stream(_project_id, _kind, _request, execution):
+        execution.checkpoint_stage("", str(stage))
+        yield f"data: {AgentEvent(event='session', session_id=session_id).model_dump_json()}\n\n"
+        error = f"collab spawn failed: no thread with id: {session_id}"
+        yield f"data: {AgentEvent(event='error', text=error).model_dump_json()}\n\n"
+
+    app.state.background_tasks.stream = failed_stream
+    with TestClient(app) as client:
+        imported = client.post(
+            f"/api/projects/{project_id}/provider-history/codex",
+            json={"session_id": session_id},
+        )
+        assert imported.status_code == 200, imported.text
+        started = client.post(
+            f"/api/projects/{project_id}/provider-history/codex/{session_id}/continue",
+            json={"message": "Continue this", "mode": "work"},
+        )
+        assert started.status_code == 202, started.text
+        failed = wait_for_task_response(client, project_id, started.json()["task"]["operation_id"])
+        assert failed["status"] == "failed"
+        retry = client.post(
+            f"/api/projects/{project_id}/tasks/{failed['operation_id']}/retry", json={}
+        )
+        assert retry.status_code == 409, retry.text
+        assert "cannot start a fresh session" in retry.text
