@@ -99,10 +99,19 @@ def find_native_transcript(
     path = matches[0]
     if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.geteuid():
         raise ValueError("Native provider transcript ownership is invalid.")
-    if source_path_sha256 is not None and (
-        provider != "codex" or hashlib.sha256(os.fsencode(path)).hexdigest() != source_path_sha256
-    ):
-        raise ValueError("The continued native transcript changed source identity.")
+    if source_path_sha256 is not None:
+        # Imported history records the canonical path. The account's CODEX_HOME
+        # may be an alias to that same directory (for example, a home symlink).
+        # Resolve the containing root too, while still rejecting a linked file
+        # or a path that escapes the configured sessions directory.
+        canonical_root = root.resolve(strict=True)
+        canonical_path = path.resolve(strict=True)
+        if (
+            provider != "codex"
+            or not canonical_path.is_relative_to(canonical_root)
+            or hashlib.sha256(os.fsencode(canonical_path)).hexdigest() != source_path_sha256
+        ):
+            raise ValueError("The continued native transcript changed source identity.")
     with path.open("rb") as stream:
         header = [stream.readline() for _ in range(20 if provider == "claude" else 1)]
     try:

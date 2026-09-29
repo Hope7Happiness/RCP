@@ -135,6 +135,39 @@ def test_imported_codex_transcript_requires_original_cwd_and_path(
         )
 
 
+def test_imported_codex_transcript_accepts_symlinked_home_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    session_id = "123e4567-e89b-12d3-a456-426614174000"
+    original = tmp_path / "repository"
+    original.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    canonical_home = tmp_path / "canonical-home"
+    sessions = canonical_home / ".codex" / "sessions"
+    sessions.mkdir(parents=True)
+    transcript = sessions / f"rollout-2026-09-29T00-00-00-{session_id}.jsonl"
+    _append(
+        transcript, {"type": "session_meta", "payload": {"id": session_id, "cwd": str(original)}}
+    )
+    alias_home = tmp_path / "alias-home"
+    alias_home.symlink_to(canonical_home, target_is_directory=True)
+    digest = hashlib.sha256(os.fsencode(transcript)).hexdigest()
+
+    assert (
+        find_native_transcript(
+            "codex",
+            session_id,
+            stage,
+            account_home=alias_home,
+            origin_cwd=original,
+            source_path_sha256=digest,
+        ).resolve()
+        == transcript
+    )
+
+
 def test_codex_refuses_another_turn_or_wrong_completion(tmp_path: Path) -> None:
     transcript = tmp_path / "codex.jsonl"
     _append(
