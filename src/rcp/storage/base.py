@@ -61,6 +61,7 @@ class AppStoreBase:
         (24, "compute_probe_routes_v1"),
         (25, "chat_display_v1"),
         (26, "provider_history_imports_v1"),
+        (27, "codex_continuations_v1"),
     )
     _SCHEMA_NORMALIZED_TABLES: ClassVar[frozenset[str]] = frozenset(
         {
@@ -601,6 +602,12 @@ class AppStoreBase:
             version=26,
             name="provider_history_imports_v1",
             migration=self._migrate_provider_history_imports,
+        )
+        self._run_storage_schema_migration(
+            connection,
+            version=27,
+            name="codex_continuations_v1",
+            migration=self._migrate_codex_continuations,
         )
         if schema_capture is not None:
             schema_capture.extend(self._storage_schema(connection))
@@ -2047,6 +2054,7 @@ class AppStoreBase:
         self._migrate_compute_probe_routes(connection)
         self._migrate_chat_display(connection)
         self._migrate_provider_history_imports(connection)
+        self._migrate_codex_continuations(connection)
         if not schema_template:
             self._normalize_legacy_startup_schema(connection)
         if issue_bootstrap:
@@ -2270,6 +2278,27 @@ class AppStoreBase:
                 imported_at TEXT NOT NULL,
                 messages_json TEXT NOT NULL,
                 PRIMARY KEY (project_id, provider, session_id)
+            )
+        """)
+
+    @staticmethod
+    def _migrate_codex_continuations(connection: sqlite3.Connection) -> None:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS codex_continuations (
+                native_session_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                chat_id TEXT NOT NULL UNIQUE,
+                first_operation_id TEXT NOT NULL UNIQUE,
+                source_path_sha256 TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                source_bytes INTEGER NOT NULL CHECK(source_bytes > 0),
+                source_cwd TEXT NOT NULL,
+                repository_alias TEXT NOT NULL,
+                execution_machine TEXT NOT NULL,
+                graph_target_json TEXT NOT NULL,
+                initial_mode TEXT NOT NULL CHECK(initial_mode IN ('discuss', 'work')),
+                first_message_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
 

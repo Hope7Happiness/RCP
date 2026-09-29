@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from rcp.agents.herdr_receipts import claude_turn_receipt, codex_turn_receipt
+from rcp.agents.herdr_receipts import (
+    claude_turn_receipt,
+    codex_turn_receipt,
+    find_native_transcript,
+)
 
 
 def _append(path: Path, *records: dict[str, object]) -> None:
@@ -87,6 +93,46 @@ def test_codex_tui_context_is_not_a_human_turn(tmp_path: Path) -> None:
     )
     receipt = codex_turn_receipt(transcript, offset=0, session_id="session", prompt="do work")
     assert receipt is not None and receipt.answer == "Finished."
+
+
+def test_imported_codex_transcript_requires_original_cwd_and_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    session_id = "123e4567-e89b-12d3-a456-426614174000"
+    original = tmp_path / "repository"
+    original.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    sessions = tmp_path / ".codex" / "sessions"
+    sessions.mkdir(parents=True)
+    transcript = sessions / f"rollout-2026-09-29T00-00-00-{session_id}.jsonl"
+    _append(
+        transcript, {"type": "session_meta", "payload": {"id": session_id, "cwd": str(original)}}
+    )
+    digest = hashlib.sha256(os.fsencode(transcript)).hexdigest()
+    assert (
+        find_native_transcript(
+            "codex",
+            session_id,
+            stage,
+            account_home=tmp_path,
+            origin_cwd=original,
+            source_path_sha256=digest,
+        )
+        == transcript
+    )
+    with pytest.raises(ValueError, match="different stage"):
+        find_native_transcript("codex", session_id, stage, account_home=tmp_path)
+    with pytest.raises(ValueError, match="source identity"):
+        find_native_transcript(
+            "codex",
+            session_id,
+            stage,
+            account_home=tmp_path,
+            origin_cwd=original,
+            source_path_sha256="0" * 64,
+        )
 
 
 def test_codex_refuses_another_turn_or_wrong_completion(tmp_path: Path) -> None:

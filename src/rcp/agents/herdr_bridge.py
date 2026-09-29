@@ -73,6 +73,154 @@ class HerdrProcessIdentity:
     group_leader_pid: int
 
 
+def _is_codex_process(argv: list[str]) -> bool:
+    if not argv:
+        return False
+    executable = Path(argv[0]).name
+    if executable == "codex":
+        return True
+    return executable == "node" and any(Path(arg).stem == "codex" for arg in argv[1:3])
+
+
+def _codex_process_matches_session(argv: list[str], session_id: str, cwd: Path) -> bool:
+    if not _is_codex_process(argv):
+        return False
+    if any(argv[index : index + 2] == ["resume", session_id] for index in range(len(argv) - 1)):
+        return True
+    return any(argv[index : index + 2] == ["-C", str(cwd)] for index in range(len(argv) - 1))
+
+
+def _local_codex_processes(
+    session_id: str, cwd: Path, *, excluded_pids: frozenset[int] = frozenset()
+) -> list[int]:
+    """Find same-user Codex writers the Herdr inventory may not report."""
+
+    if not sys.platform.startswith("linux"):
+        raise ValueError("Existing Codex session handoff requires Linux process identity.")
+    matches: list[int] = []
+    for process in Path("/proc").iterdir():
+        if not process.name.isdecimal():
+            continue
+        if int(process.name) in excluded_pids:
+            continue
+        try:
+            if process.stat().st_uid != os.geteuid():
+                continue
+            argv = [
+                os.fsdecode(item)
+                for item in (process / "cmdline").read_bytes().split(b"\0")
+                if item
+            ]
+            if not _is_codex_process(argv):
+                continue
+            if _codex_process_matches_session(argv, session_id, cwd):
+                matches.append(int(process.name))
+                continue
+            if (process / "cwd").resolve() == cwd:
+                matches.append(int(process.name))
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue  # The process exited or belongs to another identity.
+    return matches
+
+
+def require_codex_session_quiescent(
+    session_id: str, source_cwd: Path, *, owned_pane_id: str | None = None
+) -> None:
+    """Refuse a second writer until the original native process has exited.
+
+    This is an admission proof, not a lock understood by arbitrary Codex
+    processes. The launch path repeats it immediately before a prompt.
+    """
+
+    try:
+        if str(uuid.UUID(session_id)) != session_id:
+            raise ValueError
+    except ValueError as exc:
+        raise ValueError("Codex session ID must be a canonical UUID.") from exc
+    if not source_cwd.is_absolute() or not source_cwd.is_dir():
+        raise ValueError("The imported Codex working directory is unavailable.")
+    source_cwd = source_cwd.resolve()
+    if os.environ.get("HERDR_ENV") != "1":
+        raise ValueError("The RCP server is not running inside Herdr.")
+
+    if owned_pane_id is not None and not _PANE_ID.fullmatch(owned_pane_id):
+        raise ValueError("The owned Herdr pane identity is invalid.")
+
+    async def inspect_herdr() -> tuple[str | None, frozenset[int]]:
+        adapter = HerdrNativeAdapter()
+        result = await adapter._api("agent.list", {})
+        agents = result.get("agents")
+        if not isinstance(agents, list):
+            raise HerdrBridgeError("Herdr agent inventory is unavailable.")
+        excluded_pids: set[int] = set()
+        found_owned = owned_pane_id is None
+        for item in agents:
+            if not isinstance(item, dict) or item.get("agent") != "codex":
+                continue
+            pane_id = item.get("pane_id")
+            if not isinstance(pane_id, str) or not _PANE_ID.fullmatch(pane_id):
+                raise HerdrBridgeError("Herdr returned an invalid Codex pane identity.")
+            if pane_id == owned_pane_id:
+                found_owned = True
+                info = await adapter._api("pane.process_info", {"pane_id": pane_id})
+                process_info = info.get("process_info")
+                if not isinstance(process_info, dict) or process_info.get("pane_id") != pane_id:
+                    raise HerdrBridgeError("The owned Codex pane changed process identity.")
+                processes = process_info.get("foreground_processes")
+                if not isinstance(processes, list) or not processes:
+                    raise HerdrBridgeError("The owned Codex pane has no provider process.")
+                for process in processes:
+                    if isinstance(process, dict) and isinstance(process.get("pid"), int):
+                        excluded_pids.add(process["pid"])
+                continue
+            session = item.get("agent_session")
+            identified = (
+                isinstance(session, dict)
+                and session.get("kind") == "id"
+                and session.get("value") == session_id
+            )
+            same_cwd = item.get("cwd") == str(source_cwd)
+            if not identified and not same_cwd:
+                continue
+            info = await adapter._api("pane.process_info", {"pane_id": pane_id})
+            process_info = info.get("process_info")
+            if not isinstance(process_info, dict) or process_info.get("pane_id") != pane_id:
+                raise HerdrBridgeError("Herdr returned mismatched Codex process identity.")
+            processes = process_info.get("foreground_processes")
+            if not isinstance(processes, list):
+                raise HerdrBridgeError("Herdr cannot prove the Codex process has stopped.")
+            if (
+                identified
+                or any(
+                    isinstance(process, dict)
+                    and isinstance(process.get("argv"), list)
+                    and _codex_process_matches_session(process["argv"], session_id, source_cwd)
+                    for process in processes
+                )
+                or (same_cwd and processes)
+            ):
+                return pane_id, frozenset(excluded_pids)
+        if not found_owned:
+            raise HerdrBridgeError("The owned Codex pane disappeared before prompt delivery.")
+        return None, frozenset(excluded_pids)
+
+    try:
+        pane_id, excluded_pids = asyncio.run(inspect_herdr())
+    except HerdrBridgeError as exc:
+        raise ValueError(f"Cannot prove the Codex session has stopped: {exc}") from exc
+    if pane_id is not None:
+        raise ValueError(
+            f"Codex is still active in Herdr pane {pane_id}. Exit that agent in Herdr, "
+            "then retry Continue; RCP will resume its native session in a controlled pane."
+        )
+    owners = _local_codex_processes(session_id, source_cwd, excluded_pids=excluded_pids)
+    if owners:
+        raise ValueError(
+            f"Codex process {owners[0]} still owns this repository or native session. "
+            "Exit it before continuing in RCP."
+        )
+
+
 def isolated_codex_home(cwd: Path) -> Path:
     """Hide ambient Codex config and rules while retaining native login/history.
 

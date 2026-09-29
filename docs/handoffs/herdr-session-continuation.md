@@ -7,27 +7,27 @@ in RCP-created Herdr panes. RCP persists task, native session, answer, and
 pane/process binding receipts, enforces its ordinary Work profile, and closes
 the pane at the end of the attempt. Existing background runtimes remain
 selectable. A Codex session from an existing pane can be imported into Agents
-as a bounded read-only snapshot by native session id.
+as a bounded provider-history snapshot by native session id. Its appended
+messages refresh while the detail is visible. After its old process exits, a
+human can explicitly continue the same native session in Discuss or Work from
+the Agents composer. A durable exclusive claim binds the original transcript,
+repository, project, chat, first task, and execution machine. Ordinary task admission
+cannot bypass that handoff. A disposable end-to-end run proved the same native
+session could answer from prior context and later edit a file in Work.
 
 ## Remaining work
 
-- Define an inbound observation channel for messages typed directly into a
-  Herdr agent. These messages may update a clearly labelled provider-history
-  display, but cannot become RCP Work turns, answers, or graph changes without
-  RCP's captured task authority and structured receipts. The current import
-  refresh is explicit; it does not tail a live session.
-- Let a human continue an imported native session from the RCP composer only
-  after RCP proves there is no concurrent writer and reopens it in a controlled
-  Herdr pane. The previous process may have been launched with permissions
-  outside the project's RCP profile. Do not inject a task prompt into that
-  process or run two agents against one native transcript. Preserve the
-  imported source identity and original working-directory binding, and test
-  the provider's resume behavior when RCP's task stage uses a different cwd.
-- Decide how an RCP-owned chat displays externally entered messages with
-  provenance. Direct Herdr messages must not silently consume a Discuss or
-  Work mode or gain Patch authority. Verify Stop, restart, idempotent replay,
-  and session/pane rebinding on disposable data.
+- Define a user-facing way to enter a new RCP-authorized task from Herdr itself.
+  The current inbound observation refreshes provider history only; direct
+  Herdr prompts have no RCP task, mode, answer, or graph authority.
+- Decide how an RCP-owned chat presents externally entered messages alongside
+  canonical task turns without conflating their authority. The imported
+  history detail remains a separate projection for now.
+- Complete a disposable interruption/restart/Stop exercise of an imported
+  continuation while its Herdr pane is active. Focused tests cover durable
+  claim idempotency, live-pane refusal, exact process binding, and task
+  admission; the served-app success check covered settled Discuss and Work.
 
-The present trial service leaves the existing external pane untouched. New
-RCP chat turns can already use Herdr; the imported history view cannot send
-to or take over that pane.
+The existing external pane remains untouched. If it still owns the session,
+the continuation action names it and waits for the human to exit it before
+RCP resumes that same session under its own permission profile.

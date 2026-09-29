@@ -211,6 +211,20 @@ and `stream-json` paths remain available. The Herdr integration does not treat
 terminal text as Patch authority; the task stage's `patch.json` and ordinary
 Apply path retain that role.
 
+An imported local Codex session can be admitted to one RCP project chat only
+after the original process releases it. RCP binds the original native file,
+its imported prefix, working directory, repository, project, chat, execution
+machine, and main graph target before the first task. The first operation id is
+durable, so retries cannot start a second turn. Ordinary task admission refuses
+an imported session until this explicit handoff and rejects any later change
+to its bound chat or repository. The launcher checks for competing Codex
+processes again before its managed prompt and validates the exact native
+transcript when collecting the structured answer. The old process is never
+reused because its launch flags may bypass RCP's profile. This handoff is
+currently local Linux Codex only; Claude and remote imported sessions have no
+continuation contract. Direct messages in Herdr are displayed as provider
+history and do not acquire a task, mode, answer, or Patch authority.
+
 App-server usage counts the change in `tokenUsage.total` from the same thread's
 pre-turn resume snapshot (zero for a fresh thread) to the active turn's final
 snapshot. `last` covers only one model response, not a whole agent turn. Repeated

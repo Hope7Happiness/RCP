@@ -272,10 +272,23 @@ def _committed_chat_prompt_state(
             request.run_on,
             request.session_id,
         ):
-            raise ValueError(
-                "The supplied native session does not belong to this RCP chat, provider, and "
-                "execution machine. Start a new chat session instead."
-            )
+            claim = execution.store.codex_continuation(request.session_id)
+            if not (
+                claim is not None
+                and request.provider == "codex"
+                and request.chat_scope == "project"
+                and request.node_id is None
+                and current.kind == "project_chat"
+                and current.graph_target.kind == "main"
+                and execution.runtime_id == "codex.herdr-native.v1"
+                and current.project_id == claim["project_id"]
+                and request.chat_id == claim["chat_id"]
+                and request.run_on == claim["execution_machine"]
+            ):
+                raise ValueError(
+                    "The supplied native session does not belong to this RCP chat, provider, "
+                    "and execution machine. Start a new chat session instead."
+                )
         return None, None
     return (
         _ChatMasterSnapshot.model_validate_json(baseline.snapshot_json),

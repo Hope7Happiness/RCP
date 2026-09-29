@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ChatsWorkspace } from "../../src/views/ChatsWorkspace";
 import { buildGlossaryIndex } from "../../src/glossary";
 import type { ChatConversation } from "../../src/chatWorkspace";
-import type { ChatTranscript, ProjectSnapshot } from "../../src/types";
+import type { AgentTask, ChatTranscript, ProjectSnapshot } from "../../src/types";
 import "../../src/styles.css";
 
 const profile = {
@@ -59,8 +59,11 @@ const chatTranscripts = new Map<string, ChatTranscript>(
 
 function Fixture() {
   const [selected, setSelected] = useState(conversations[0].chatId);
+  const [continued, setContinued] = useState("");
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
   return (
     <main style={{ height: "100vh" }}>
+      <output data-testid="continued-chat">{continued}</output>
       <ChatsWorkspace
         project={project}
         conversations={conversations}
@@ -68,7 +71,7 @@ function Fixture() {
         nodes={{}}
         glossaryIndex={buildGlossaryIndex({})}
         runScope={[]}
-        tasks={[]}
+        tasks={tasks}
         watchers={[]}
         graphChangesDisabled={false}
         unreadTaskIds={new Set()}
@@ -86,6 +89,18 @@ function Fixture() {
         onInspectTask={() => {}}
         onOpenInbox={() => {}}
         onRepairGraphUpdate={async () => {}}
+        onContinueImported={(result) => {
+          setContinued(result.chat_id);
+          setTasks([
+            {
+              ...result.task,
+              native_session_id: "11111111-1111-4111-8111-111111111111",
+              kind: "project_chat",
+              history_only: false,
+              request: { chat_id: result.chat_id, run_truth_scope: ["repo"] },
+            } as AgentTask,
+          ]);
+        }}
         onNewSession={() => {}}
       />
     </main>

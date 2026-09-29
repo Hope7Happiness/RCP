@@ -1133,6 +1133,8 @@ class AgentLauncher:
         model: str | None = None,
         reasoning: str | None = None,
         session_id: str | None = None,
+        native_session_origin_cwd: Path | None = None,
+        native_session_source_path_sha256: str | None = None,
         read_dirs: list[Path] | None = None,
         write_dirs: list[Path] | None = None,
         write_scope: ProjectWriteScope | None = None,
@@ -1170,6 +1172,8 @@ class AgentLauncher:
                         model=model,
                         reasoning=reasoning,
                         session_id=session_id,
+                        native_session_origin_cwd=native_session_origin_cwd,
+                        native_session_source_path_sha256=native_session_source_path_sha256,
                         read_dirs=read_dirs,
                         write_dirs=write_dirs,
                         write_scope=write_scope,
@@ -1221,6 +1225,8 @@ class AgentLauncher:
         model: str | None = None,
         reasoning: str | None = None,
         session_id: str | None = None,
+        native_session_origin_cwd: Path | None = None,
+        native_session_source_path_sha256: str | None = None,
         read_dirs: list[Path] | None = None,
         write_dirs: list[Path] | None = None,
         write_scope: ProjectWriteScope | None = None,
@@ -1307,6 +1313,8 @@ class AgentLauncher:
                 model=model,
                 reasoning=reasoning,
                 session_id=session_id,
+                native_session_origin_cwd=native_session_origin_cwd,
+                native_session_source_path_sha256=native_session_source_path_sha256,
                 read_dirs=read_dirs or [],
                 write_dirs=write_dirs or [],
                 write_scope=write_scope,
@@ -1884,6 +1892,8 @@ class AgentLauncher:
         model: str | None,
         reasoning: str | None,
         session_id: str | None,
+        native_session_origin_cwd: Path | None,
+        native_session_source_path_sha256: str | None,
         read_dirs: list[Path],
         write_dirs: list[Path],
         write_scope: ProjectWriteScope | None,
@@ -1909,6 +1919,7 @@ class AgentLauncher:
             build_native_agent_args,
             cleanup_isolated_codex_home,
             isolated_codex_home,
+            require_codex_session_quiescent,
         )
         from rcp.agents.herdr_receipts import (
             claude_turn_receipt,
@@ -1938,9 +1949,22 @@ class AgentLauncher:
             )
             return
         adapter = HerdrNativeAdapter()
+        if native_session_origin_cwd is not None and (
+            provider != "codex" or session_id is None or not native_session_source_path_sha256
+        ):
+            yield AgentEvent(event="error", text="Imported native session binding is incomplete.")
+            return
         if session_id:
             try:
-                active = await adapter.session_active(provider, session_id, cwd=cwd)
+                if provider == "codex":
+                    await asyncio.to_thread(
+                        require_codex_session_quiescent,
+                        session_id,
+                        native_session_origin_cwd or cwd,
+                    )
+                    active = False
+                else:
+                    active = await adapter.session_active(provider, session_id, cwd=cwd)
             except (OSError, RuntimeError, ValueError) as exc:
                 yield AgentEvent(event="error", text=str(exc))
                 return
@@ -2014,7 +2038,17 @@ class AgentLauncher:
             agent_started_at = time.monotonic()
             hold.restart_minimum()
             native_id = session_id or fresh_claude_id
-            transcript = find_native_transcript(provider, native_id, cwd) if native_id else None
+            transcript = (
+                find_native_transcript(
+                    provider,
+                    native_id,
+                    cwd,
+                    origin_cwd=native_session_origin_cwd,
+                    source_path_sha256=native_session_source_path_sha256,
+                )
+                if native_id
+                else None
+            )
             offset = transcript.stat().st_size if transcript is not None else 0
             process_identity = await adapter.process_info(agent)
             if not _native_binary_matches(process_identity.group_leader_pid, binary):
@@ -2047,6 +2081,13 @@ class AgentLauncher:
                     yield AgentEvent(event="herdr_binding_stop", text=json.dumps(binding))
                     yield AgentEvent(event="paused", text="Paused before the Herdr prompt.")
                     return
+                if provider == "codex" and native_id is not None:
+                    await asyncio.to_thread(
+                        require_codex_session_quiescent,
+                        native_id,
+                        native_session_origin_cwd or cwd,
+                        owned_pane_id=agent.pane_id,
+                    )
                 yield AgentEvent(event="runtime", text=runtime_id)
                 # Submission can be ambiguous on socket loss. Never resend.
                 await adapter.prompt(agent, prompt)
@@ -2080,7 +2121,13 @@ class AgentLauncher:
                             saw_activity = True
                             yield AgentEvent(event="session", session_id=native_id)
                     if transcript is None and native_id is not None:
-                        transcript = find_native_transcript(provider, native_id, cwd)
+                        transcript = find_native_transcript(
+                            provider,
+                            native_id,
+                            cwd,
+                            origin_cwd=native_session_origin_cwd,
+                            source_path_sha256=native_session_source_path_sha256,
+                        )
                     if transcript is not None:
                         reader = codex_turn_receipt if provider == "codex" else claude_turn_receipt
                         receipt = reader(

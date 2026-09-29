@@ -6,6 +6,7 @@ task. Only a matching provider-authored terminal record can do that.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -63,7 +64,13 @@ def find_new_codex_transcript(
 
 
 def find_native_transcript(
-    provider: str, session_id: str, cwd: Path, *, account_home: Path | None = None
+    provider: str,
+    session_id: str,
+    cwd: Path,
+    *,
+    account_home: Path | None = None,
+    origin_cwd: Path | None = None,
+    source_path_sha256: str | None = None,
 ) -> Path | None:
     """Find only the exact provider session attributed to this local stage.
 
@@ -92,6 +99,10 @@ def find_native_transcript(
     path = matches[0]
     if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.geteuid():
         raise ValueError("Native provider transcript ownership is invalid.")
+    if source_path_sha256 is not None and (
+        provider != "codex" or hashlib.sha256(os.fsencode(path)).hexdigest() != source_path_sha256
+    ):
+        raise ValueError("The continued native transcript changed source identity.")
     with path.open("rb") as stream:
         header = [stream.readline() for _ in range(20 if provider == "claude" else 1)]
     try:
@@ -116,7 +127,9 @@ def find_native_transcript(
         bound_cwd = next((record.get("cwd") for record in records if record.get("cwd")), None)
     if bound_cwd is None and provider == "claude":
         return None
-    if bound_cwd != str(cwd):
+    if origin_cwd is not None and provider != "codex":
+        raise ValueError("Only Codex supports an imported session origin.")
+    if bound_cwd != str(origin_cwd or cwd):
         raise ValueError("Native provider transcript belongs to a different stage.")
     return path
 

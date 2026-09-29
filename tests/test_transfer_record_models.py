@@ -150,7 +150,7 @@ def test_current_project_tables_have_one_explicit_transfer_disposition(tmp_path:
 
     assert TRANSFER_RECORD_TABLES.isdisjoint(TRANSFER_EXCLUDED_PROJECT_TABLES)
     assert len(TRANSFER_RECORD_TABLES) == 29
-    assert len(TRANSFER_EXCLUDED_PROJECT_TABLES) == 27
+    assert len(TRANSFER_EXCLUDED_PROJECT_TABLES) == 29
     with pytest.raises(ValueError, match="future_project_history"):
         validate_transfer_table_policy(changed.project_linked_tables)
 

@@ -189,6 +189,7 @@ class AgentTaskStoreMixin:
                 connection.execute("BEGIN IMMEDIATE")
                 if continuation_cause == "fresh":
                     self._require_project_accepts_new_work(connection, record.project_id)
+                self._require_codex_continuation_task(connection, record)
                 if self._has_active_chat_overlap(connection, record):
                     raise AgentTaskAdmissionConflict(
                         "Another task is already active in this conversation."

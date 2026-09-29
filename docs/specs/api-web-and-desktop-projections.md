@@ -73,9 +73,21 @@ return bounded message pages, and import or refresh one exact local native
 session by UUID. Import uses project write admission and verifies that the
 source is inside configured Codex roots and belongs to one local project
 repository. The Agents list counts these imports separately and opens a
-read-only message view with no composer. Project Settings offers the import
-control; refresh controls never dispatch agent work or attach RCP
-conversation authority. Team and remote-project imports are refused.
+provider-history detail. Its source-status route checks appended bytes without
+reading the whole transcript; while the detail is visible, Web polls every
+20 seconds and refreshes changed snapshots. Project Settings offers manual
+import and refresh controls. These observations never dispatch a task.
+
+The Agents detail also has an explicit Discuss/Work composer for a local
+imported Codex session. `POST /api/projects/{project_id}/provider-history/codex/{session_id}/continue`
+accepts `{message, mode}` and returns the durable `chat_id` and ordinary task
+projection. It requires a personal project, Codex `herdr-native` project chat,
+an available original session, and exact local repository binding. A conflicting
+live pane or process returns 409 with a reason. A duplicate first request
+returns the same task. The browser then opens the ordinary chat; its subsequent
+turns use the usual task route and permission controls. Team and remote-project
+imports or continuations are refused. The imported transcript remains labelled
+history, even when its native session is also owned by an RCP chat.
 
 One FastAPI backend serves the JSON API and, when built, the React/Vite
 application. The optional Tauri shell starts or reuses that same backend. There

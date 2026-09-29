@@ -40,7 +40,7 @@ import type {
 } from "../types";
 import { api, loadChatDisplay, setChatArchived, setChatTitle } from "../api";
 import { NodeChat } from "../components/NodeChat";
-import { ProviderHistory } from "../components/ProviderHistory";
+import { ProviderHistory, type ImportedContinuation } from "../components/ProviderHistory";
 import { useNarrowViewport } from "../hooks/useNarrowViewport";
 
 interface Props {
@@ -70,6 +70,7 @@ interface Props {
   onStopWatcher?: (watcherId: string) => void;
   onNewSession: (conversation: ChatConversation) => void;
   onRemoveDraft: (chatId: string) => void;
+  onContinueImported: (result: ImportedContinuation) => Promise<void> | void;
 }
 
 function chatListWidthStorageKey(projectId: string): string {
@@ -170,6 +171,7 @@ export function ChatsWorkspace({
   onStopWatcher,
   onNewSession,
   onRemoveDraft,
+  onContinueImported,
 }: Props) {
   const narrow = useNarrowViewport();
   const [mobileListOpen, setMobileListOpen] = useState(false);
@@ -230,6 +232,12 @@ export function ChatsWorkspace({
     null;
   const activeImportedSessionId =
     selectedImportedSessionId ?? (selected ? null : (importedSessions[0]?.session_id ?? null));
+  const activeImportedChatId = tasks.find(
+    (task) =>
+      task.native_session_id === activeImportedSessionId &&
+      task.kind === "project_chat" &&
+      !task.history_only,
+  )?.request.chat_id;
   const filterOptions: AgentFilter[] = ["all", "needs_you", "working"];
   if (importedSessions.length > 0) filterOptions.push("imported");
   if (archivedCount > 0 || showingArchived) filterOptions.push("archived");
@@ -701,7 +709,7 @@ export function ChatsWorkspace({
                         role="option"
                         aria-selected={active}
                         aria-current={active ? "page" : undefined}
-                        aria-label={`Imported Codex session ${item.session_id}, read-only history`}
+                        aria-label={`Imported Codex session ${item.session_id}`}
                         className={active ? "active" : ""}
                         title={item.session_id}
                         onClick={() => {
@@ -715,7 +723,7 @@ export function ChatsWorkspace({
                         <span className="agent-row-body">
                           <span className="agent-row-title">Codex · {item.repository_alias}</span>
                           <span className="agent-row-meta">
-                            Read-only · {item.message_count} messages
+                            Imported · {item.message_count} messages
                           </span>
                         </span>
                         <time>{sinceLabel(item.last_timestamp, now)}</time>
@@ -805,11 +813,22 @@ export function ChatsWorkspace({
             apiBase={apiBase}
             sessionId={activeImportedSessionId}
             writesDisabled={graphChangesDisabled}
+            continuedChatId={activeImportedChatId ?? undefined}
+            onOpenContinuedChat={() => {
+              if (activeImportedChatId) {
+                setSelectedImportedSessionId(null);
+                onSelect(activeImportedChatId);
+              }
+            }}
             onImported={(saved) =>
               setImportedSessions((current) =>
                 current.map((item) => (item.session_id === saved.session_id ? saved : item)),
               )
             }
+            onContinued={async (result) => {
+              setSelectedImportedSessionId(null);
+              await onContinueImported(result);
+            }}
           />
         ) : selected ? (
           <NodeChat
@@ -821,7 +840,12 @@ export function ChatsWorkspace({
             conversationTitle={selected.kind === "node_chat" ? selected.title : undefined}
             header={conversationHeading}
             headerState={selectedStatus?.state}
-            runScope={runScope}
+            runScope={
+              selectedLatest?.native_session_id &&
+              importedSessions.some((item) => item.session_id === selectedLatest.native_session_id)
+                ? (selectedLatest.request.run_truth_scope ?? runScope)
+                : runScope
+            }
             tasks={tasks}
             watchers={watchers}
             historyMessages={chatTranscripts.get(selected.chatId)?.messages}

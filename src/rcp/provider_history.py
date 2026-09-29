@@ -164,14 +164,76 @@ def read_codex_history(manifest: Manifest, session_id: str) -> dict[str, Any]:
         raise ValueError("The Codex session identity does not match the requested id.")
     if not messages:
         raise ValueError("The Codex session has no importable user or assistant messages.")
+    source_cwd = session_meta.get("cwd")
+    repository_alias = _repository_alias(manifest, source_cwd)
     return {
         "provider": "codex",
         "session_id": session_id,
         "source_path_sha256": hashlib.sha256(os.fsencode(path)).hexdigest(),
         "source_sha256": digest.hexdigest(),
         "source_bytes": consumed,
-        "repository_alias": _repository_alias(manifest, session_meta.get("cwd", "")),
+        "repository_alias": repository_alias,
+        # Codex resume compares the original session metadata; preserve its
+        # literal absolute cwd even if it names a symlink into the repository.
+        "source_cwd": source_cwd,
         "first_timestamp": messages[0]["timestamp"],
         "last_timestamp": messages[-1]["timestamp"],
         "messages": messages,
     }
+
+
+def reprove_codex_history(manifest: Manifest, stored: dict[str, Any]) -> dict[str, Any]:
+    """Prove that an imported transcript remains an exact prefix of its native file."""
+
+    session_id = _canonical_session_id(stored["session_id"])
+    path = _session_file(manifest, session_id)
+    if hashlib.sha256(os.fsencode(path)).hexdigest() != stored["source_path_sha256"]:
+        raise ValueError("The imported Codex source path changed")
+    prefix_bytes = stored["source_bytes"]
+    if not isinstance(prefix_bytes, int) or prefix_bytes <= 0:
+        raise ValueError("The imported Codex source byte length is invalid")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size < prefix_bytes:
+            raise ValueError("The imported Codex source was truncated or replaced")
+        digest = hashlib.sha256()
+        with os.fdopen(descriptor, "rb") as source:
+            descriptor = -1
+            remaining = prefix_bytes
+            while remaining:
+                part = source.read(min(remaining, 1024 * 1024))
+                if not part:
+                    raise ValueError("The imported Codex source prefix is unavailable")
+                digest.update(part)
+                remaining -= len(part)
+            after = os.fstat(source.fileno())
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError("The imported Codex source changed identity")
+        if digest.hexdigest() != stored["source_sha256"]:
+            raise ValueError("The imported Codex source prefix changed")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    current = read_codex_history(manifest, session_id)
+    if current["repository_alias"] != stored["repository_alias"]:
+        raise ValueError("The imported Codex repository binding changed")
+    return current
+
+
+def codex_history_source_size(manifest: Manifest, stored: dict[str, Any]) -> int:
+    """Read only the bound file's size for cheap append polling."""
+
+    path = _session_file(manifest, _canonical_session_id(stored["session_id"]))
+    if hashlib.sha256(os.fsencode(path)).hexdigest() != stored["source_path_sha256"]:
+        raise ValueError("The imported Codex source path changed")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        identity = os.fstat(descriptor)
+        if not stat.S_ISREG(identity.st_mode) or identity.st_uid != os.geteuid():
+            raise ValueError("The imported Codex source identity is invalid")
+        if identity.st_size < stored["source_bytes"]:
+            raise ValueError("The imported Codex source was truncated")
+        return identity.st_size
+    finally:
+        os.close(descriptor)

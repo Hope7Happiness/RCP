@@ -12,9 +12,11 @@ from rcp.agents.herdr_bridge import (
     HerdrBridgeError,
     HerdrNativeAdapter,
     HerdrNativeAgent,
+    _codex_process_matches_session,
     build_native_agent_args,
     cleanup_isolated_codex_home,
     isolated_codex_home,
+    require_codex_session_quiescent,
 )
 from rcp.agents.write_scope import ProjectWriteScope, WritableRepositoryRoot
 from rcp.providers import ProviderTurnRequest
@@ -135,6 +137,65 @@ def test_recovered_codex_home_cleanup_is_bounded(tmp_path: Path) -> None:
     assert not home.exists()
     with pytest.raises(ValueError, match="invalid Codex home"):
         cleanup_isolated_codex_home(str(tmp_path))
+
+
+def test_codex_handoff_refuses_live_pane_and_ignores_only_owned_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = "123e4567-e89b-12d3-a456-426614174000"
+    source = tmp_path / "repo"
+    source.mkdir()
+    monkeypatch.setenv("HERDR_ENV", "1")
+    observed: list[frozenset[int]] = []
+    other_active = True
+
+    class FakeHerdr:
+        async def _api(self, method, params):
+            if method == "agent.list":
+                return {
+                    "agents": (
+                        [
+                            {"agent": "codex", "pane_id": "w1:p2", "cwd": str(source)},
+                        ]
+                        if other_active
+                        else []
+                    )
+                    + [{"agent": "codex", "pane_id": "w1:p3", "cwd": str(tmp_path / "stage")}]
+                }
+            assert method == "pane.process_info"
+            pane_id = params["pane_id"]
+            return {
+                "process_info": {
+                    "pane_id": pane_id,
+                    "foreground_processes": [
+                        {
+                            "pid": 21 if pane_id == "w1:p2" else 31,
+                            "argv": ["codex", "resume", session_id],
+                        }
+                    ],
+                }
+            }
+
+    def local_processes(_session_id, _cwd, *, excluded_pids):
+        observed.append(excluded_pids)
+        return []
+
+    monkeypatch.setattr("rcp.agents.herdr_bridge.HerdrNativeAdapter", FakeHerdr)
+    monkeypatch.setattr("rcp.agents.herdr_bridge._local_codex_processes", local_processes)
+    with pytest.raises(ValueError, match="Herdr pane w1:p2"):
+        require_codex_session_quiescent(session_id, source)
+    with pytest.raises(ValueError, match="Herdr pane w1:p2"):
+        require_codex_session_quiescent(session_id, source, owned_pane_id="w1:p3")
+    other_active = False
+    require_codex_session_quiescent(session_id, source, owned_pane_id="w1:p3")
+    assert observed == [frozenset({31})]
+
+
+def test_codex_handoff_identifies_node_cli_wrapper(tmp_path: Path) -> None:
+    session_id = "123e4567-e89b-12d3-a456-426614174000"
+    assert _codex_process_matches_session(
+        ["node", "/opt/codex/bin/codex.js", "resume", session_id], session_id, tmp_path
+    )
 
 
 def test_native_resume_preserves_scope_and_rejects_wrong_binary(tmp_path: Path) -> None:

@@ -86,6 +86,7 @@ def test_expensive_storage_migrations_are_versioned_and_not_rescanned(
         (24, "compute_probe_routes_v1"),
         (25, "chat_display_v1"),
         (26, "provider_history_imports_v1"),
+        (27, "codex_continuations_v1"),
     ]
 
     def unexpected_migration(*_args) -> None:
@@ -1961,6 +1962,7 @@ def test_project_record_deletion_is_atomic_complete_and_project_scoped(tmp_path)
         "chat_session_contexts": 1,
         "chat_display": 0,
         "provider_history_imports": 0,
+        "codex_continuations": 0,
         "conversation_worktrees": 0,
         "compute_jobs": 0,
         "compute_backend_probes": 0,
