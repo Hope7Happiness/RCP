@@ -123,6 +123,12 @@ test("Agents shows imported history and can request a controlled Codex continuat
     await page.getByText("Later Herdr message", { exact: true }).waitFor();
     assert.equal(await page.locator(".provider-history-message").count(), 3);
     assert.equal(await page.getByRole("textbox", { name: "Message", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "Continue session" }).click();
+    await page
+      .getByRole("alert")
+      .getByText(/Enter a message/)
+      .waitFor();
+    assert.equal(continuationRequests.length, 0);
     await page
       .getByRole("textbox", { name: "Message to continue Codex session" })
       .fill("Next step");

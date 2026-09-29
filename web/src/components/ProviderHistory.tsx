@@ -136,7 +136,11 @@ export function ProviderHistory({
 
   async function continueSession(id: string) {
     const text = message.trim();
-    if (!text || !onContinued) return;
+    if (!onContinued) return;
+    if (!text) {
+      setError("Enter a message to start the next turn of this Codex session.");
+      return;
+    }
     setBusy(true);
     setError(null);
     let started = false;
@@ -250,7 +254,8 @@ export function ProviderHistory({
           <p>
             The next RCP turn resumes this native session in a managed Herdr pane. An existing Codex
             process must release the session first. Choose Work explicitly to allow bounded project
-            writes and commands; Discuss is read only.
+            writes and commands; Discuss is read only. Enter the message you want Codex to handle
+            next, then continue.
           </p>
           <fieldset disabled={busy || writesDisabled}>
             <legend>Permission for the next turn</legend>
@@ -278,7 +283,10 @@ export function ProviderHistory({
           <textarea
             aria-label="Message to continue Codex session"
             disabled={busy || writesDisabled}
-            onChange={(event) => setMessage(event.target.value)}
+            onChange={(event) => {
+              setMessage(event.target.value);
+              setError(null);
+            }}
             placeholder="What should Codex do next?"
             rows={4}
             style={{ display: "block", maxWidth: "100%", width: "100%" }}
@@ -286,7 +294,7 @@ export function ProviderHistory({
           />
           <button
             className="button primary compact"
-            disabled={busy || writesDisabled || !message.trim()}
+            disabled={busy || writesDisabled}
             type="submit"
           >
             {busy ? "Starting…" : "Continue session"}
