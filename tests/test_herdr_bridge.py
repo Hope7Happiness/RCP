@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from rcp.agents.herdr_bridge import (
     HerdrNativeAdapter,
     HerdrNativeAgent,
     build_native_agent_args,
+    cleanup_isolated_codex_home,
+    isolated_codex_home,
 )
 from rcp.agents.write_scope import ProjectWriteScope, WritableRepositoryRoot
 from rcp.providers import ProviderTurnRequest
@@ -71,7 +74,7 @@ def test_native_work_args_preserve_exact_provider_scope(tmp_path: Path) -> None:
 
 def test_native_args_refuse_unsupported_or_unscoped_launch(tmp_path: Path) -> None:
     request = _request(tmp_path, "work_auto")
-    with pytest.raises(ValueError, match="Interactive Codex cannot"):
+    with pytest.raises(ValueError, match="resolved project write scope"):
         build_native_agent_args("codex", request)
     with pytest.raises(ValueError, match="resolved project write scope"):
         build_native_agent_args("claude", _request(tmp_path, "work_auto", provider="claude"))
@@ -80,6 +83,58 @@ def test_native_args_refuse_unsupported_or_unscoped_launch(tmp_path: Path) -> No
     assert "acceptEdits" in build_native_agent_args(
         "claude", _request(tmp_path, "discuss", provider="claude")
     )
+
+
+def test_codex_native_args_use_exact_scope_and_no_bypass(tmp_path: Path) -> None:
+    scope = _scope(tmp_path)
+    args = build_native_agent_args("codex", _request(tmp_path, "work_auto", scope))
+    assert "--no-daemon" in args
+    assert "--strict-config" in args
+    assert 'default_permissions="rcp_project"' in args
+    assert any(str(scope.repository_roots[0]) in arg for arg in args)
+    assert "--dangerously-bypass-approvals-and-sandbox" not in args
+    assert "--sandbox" not in args
+    discuss = build_native_agent_args("codex", _request(tmp_path, "discuss"))
+    assert discuss[discuss.index("--sandbox") + 1] == "read-only"
+    resumed = build_native_agent_args(
+        "codex", replace(_request(tmp_path, "discuss"), session_id="session-1")
+    )
+    assert resumed[-2:] == ["resume", "session-1"]
+
+
+def test_codex_native_home_hides_ambient_config_and_keeps_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "original-home"
+    source.mkdir()
+    (source / "sessions").mkdir()
+    (source / "auth.json").write_text("credential fixture")
+    (source / "config.toml").write_text('sandbox_mode = "danger-full-access"')
+    (source / "rules").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    home = isolated_codex_home(workspace)
+    try:
+        assert (home / "auth.json").resolve() == source / "auth.json"
+        assert (home / "sessions").resolve() == source / "sessions"
+        assert not (home / "rules").exists()
+        config = (home / "config.toml").read_text()
+        assert "danger-full-access" not in config
+        assert str(workspace) in config
+    finally:
+        cleanup_isolated_codex_home(str(home))
+    assert not home.exists()
+
+
+def test_recovered_codex_home_cleanup_is_bounded(tmp_path: Path) -> None:
+    home = Path(tempfile.mkdtemp(prefix="rcp-codex-home-", dir="/tmp"))
+    (home / "config.toml").write_text("temporary")
+    cleanup_isolated_codex_home(str(home))
+    cleanup_isolated_codex_home(str(home))
+    assert not home.exists()
+    with pytest.raises(ValueError, match="invalid Codex home"):
+        cleanup_isolated_codex_home(str(tmp_path))
 
 
 def test_native_resume_preserves_scope_and_rejects_wrong_binary(tmp_path: Path) -> None:

@@ -1,6 +1,8 @@
 # Active implementation handoffs
 
-None.
+- [Herdr session continuation and message sync](herdr-session-continuation.md):
+  RCP-managed visible turns are implemented; imported sessions still need a
+  controlled takeover and a display-only inbound sync contract.
 
 Earlier on 2026-09-26 every open handoff was closed: ten had shipped their code,
 and the refusal-explains-itself handoff (a refused dispatch or Apply reported

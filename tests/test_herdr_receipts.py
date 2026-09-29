@@ -50,6 +50,45 @@ def test_codex_requires_matching_user_and_terminal_turn(tmp_path: Path) -> None:
     assert (receipt.answer, receipt.turn_id) == ("Finished.", "turn")
 
 
+def test_codex_tui_context_is_not_a_human_turn(tmp_path: Path) -> None:
+    transcript = tmp_path / "codex.jsonl"
+    _append(
+        transcript,
+        {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "<environment_context>\n<cwd>/stage</cwd>\n</environment_context>",
+                    }
+                ],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "do work"}],
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "turn_id": "turn",
+                "last_agent_message": "Finished.",
+            },
+        },
+    )
+    receipt = codex_turn_receipt(transcript, offset=0, session_id="session", prompt="do work")
+    assert receipt is not None and receipt.answer == "Finished."
+
+
 def test_codex_refuses_another_turn_or_wrong_completion(tmp_path: Path) -> None:
     transcript = tmp_path / "codex.jsonl"
     _append(

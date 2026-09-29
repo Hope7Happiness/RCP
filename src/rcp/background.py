@@ -528,6 +528,7 @@ class BackgroundAgentTasks:
                 HerdrBridgeError,
                 HerdrNativeAdapter,
                 HerdrNativeAgent,
+                cleanup_isolated_codex_home,
             )
 
             pane_id = binding.get("pane_id")
@@ -557,6 +558,11 @@ class BackgroundAgentTasks:
                 if identity.foreground_process_group_id != group_id:
                     raise ValueError("An unfinished Herdr pane changed provider process.")
                 await adapter.close(agent)
+            codex_home = binding.get("codex_home")
+            if codex_home is not None:
+                if provider != "codex" or not isinstance(codex_home, str):
+                    raise ValueError("An unfinished Herdr binding has malformed Codex home.")
+                cleanup_isolated_codex_home(codex_home)
             self.store.finish_herdr_binding(operation_id, binding)
 
         def run() -> None:

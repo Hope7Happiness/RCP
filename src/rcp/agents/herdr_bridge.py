@@ -13,6 +13,8 @@ import re
 import secrets
 import shutil
 import stat
+import sys
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -28,6 +30,7 @@ from rcp.limits import (
 from rcp.providers import (
     ProviderTurnRequest,
     _claude_write_settings,
+    _codex_permission_profile,
     _require_project_write_scope,
     profile_for,
 )
@@ -70,6 +73,62 @@ class HerdrProcessIdentity:
     group_leader_pid: int
 
 
+def isolated_codex_home(cwd: Path) -> Path:
+    """Hide ambient Codex config and rules while retaining native login/history.
+
+    Its two links expose the provider's own credential and session stores; no config, rule,
+    plugin, or skill files from the user's Codex home enter the launch.
+    """
+
+    if not cwd.is_absolute() or not cwd.is_dir():
+        raise ValueError("A local Codex workspace is required.")
+    source = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
+    source = source.resolve()
+    credential = source / "auth.json"
+    sessions = source / "sessions"
+    if not credential.is_file() or credential.stat().st_uid != os.geteuid():
+        raise HerdrBridgeError("The local Codex file login is unavailable.")
+    if not sessions.is_dir() or sessions.stat().st_uid != os.geteuid():
+        raise HerdrBridgeError("The local Codex session store is unavailable.")
+    # Codex installs its sandbox helper beside its temporary home. A shared
+    # project TMPDIR may be unsuitable for that executable; use the local
+    # host's private temporary filesystem for this process-only home.
+    local_tmp = Path("/tmp") if sys.platform.startswith("linux") else Path(tempfile.gettempdir())
+    home = Path(tempfile.mkdtemp(prefix="rcp-codex-home-", dir=local_tmp))
+    try:
+        (home / "auth.json").symlink_to(credential)
+        (home / "sessions").symlink_to(sessions, target_is_directory=True)
+        (home / "config.toml").write_text(
+            "check_for_update_on_startup = false\n"
+            f"[projects.{json.dumps(str(cwd))}]\n"
+            'trust_level = "trusted"\n'
+        )
+    except BaseException:
+        cleanup_isolated_codex_home(str(home))
+        raise
+    return home
+
+
+def cleanup_isolated_codex_home(value: str) -> None:
+    """Remove only an RCP-created Codex home after a recovered pane closes."""
+
+    path = Path(value)
+    local_tmp = Path("/tmp") if sys.platform.startswith("linux") else Path(tempfile.gettempdir())
+    if (
+        not path.is_absolute()
+        or path.parent != local_tmp
+        or not path.name.startswith("rcp-codex-home-")
+    ):
+        raise ValueError("An unfinished Herdr binding has an invalid Codex home.")
+    try:
+        identity = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISDIR(identity.st_mode) or identity.st_uid != os.geteuid():
+        raise ValueError("An unfinished Herdr binding changed Codex home identity.")
+    shutil.rmtree(path)
+
+
 def build_native_agent_args(
     provider_id: Literal["codex", "claude"],
     request: ProviderTurnRequest,
@@ -85,12 +144,6 @@ def build_native_agent_args(
     provider = profile_for(provider_id)
     if provider.id not in {"codex", "claude"}:
         raise ValueError("Herdr supports only Codex and Claude native agents.")
-    if provider_id == "codex":
-        raise ValueError(
-            "Interactive Codex cannot disable user configuration and rules with the "
-            "installed CLI. Herdr native Codex is unavailable until its permission "
-            "profile can be isolated; select an existing background Codex runtime."
-        )
     canonical_binary = shutil.which(provider_id)
     if (
         canonical_binary is None
@@ -128,6 +181,36 @@ def build_native_agent_args(
     if scope is not None and str(request.cwd) != scope.workspace_root:
         raise ValueError("Herdr cwd does not match the resolved write scope.")
     provider.validate_readiness_version(request.provider_version, capability=request.capability)
+
+    if provider_id == "codex":
+        version = tuple(
+            int(item) for item in re.findall(r"\d+", request.provider_version or "")[:3]
+        )
+        if len(version) != 3 or version < (0, 156, 0):
+            raise ValueError("Herdr native Codex requires CLI 0.156.0 or newer.")
+        args = ["--no-alt-screen", "--no-daemon", "--strict-config", "-C", str(request.cwd)]
+        if work:
+            assert scope is not None
+            args.extend(
+                [
+                    "-c",
+                    'default_permissions="rcp_project"',
+                    "-c",
+                    _codex_permission_profile(scope),
+                    "-c",
+                    'approval_policy="never"',
+                ]
+            )
+        else:
+            args.extend(["--sandbox", "read-only", "--ask-for-approval", "never"])
+        args.extend(["-c", 'web_search="live"'])
+        if request.model:
+            args.extend(["--model", request.model])
+        if request.reasoning:
+            args.extend(["-c", f'model_reasoning_effort="{request.reasoning}"'])
+        if request.session_id:
+            args.extend(["resume", request.session_id])
+        return args
 
     args = ["--permission-mode", "dontAsk" if work else "acceptEdits"]
     if scope is not None:

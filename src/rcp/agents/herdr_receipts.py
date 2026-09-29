@@ -180,6 +180,12 @@ def codex_turn_receipt(
             if payload.get("role") == "user":
                 text = _text_parts(payload.get("content"), "input_text")
                 if not saw_prompt:
+                    # The Codex TUI writes its own environment context as a
+                    # user-role item before the human's first message.
+                    if text.startswith("<environment_context>\n") and text.endswith(
+                        "\n</environment_context>"
+                    ):
+                        continue
                     if text != prompt or started is None:
                         raise ValueError("Native Codex transcript did not start with RCP's prompt.")
                     saw_prompt = True

@@ -38,6 +38,7 @@ from rcp.agents.steering import LiveProviderSteering
 from rcp.agents.write_scope import ProjectWriteScope
 from rcp.artifacts import AgentArtifactDescriptor
 from rcp.limits import (
+    HERDR_NATIVE_PROMPT_START_TIMEOUT_SECONDS,
     HERDR_NATIVE_RECEIPT_POLL_SECONDS,
     PROVIDER_CREDENTIAL_STARTUP_MIN_HOLD_SECONDS,
     PROVIDER_STDERR_DRAIN_TIMEOUT_SECONDS,
@@ -676,7 +677,16 @@ def _native_binary_matches(pid: int, binary: str) -> bool:
 
     if not sys.platform.startswith("linux"):
         return True
-    return Path(os.readlink(f"/proc/{pid}/exe")).resolve() == Path(binary).resolve()
+    executable = Path(os.readlink(f"/proc/{pid}/exe")).resolve()
+    expected = Path(binary).resolve()
+    if executable == expected:
+        return True
+    # The npm Codex launcher is a Node script; Herdr's foreground group is
+    # led by Node, while the native Codex binary runs inside that group.
+    if executable.name == "node":
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        return len(argv) > 1 and Path(os.fsdecode(argv[1])).resolve() == expected
+    return False
 
 
 class AgentLauncher:
@@ -1894,10 +1904,18 @@ class AgentLauncher:
         terminal event so no later unrecorded turn can inherit Work authority.
         """
 
-        from rcp.agents.herdr_bridge import HerdrNativeAdapter, build_native_agent_args
+        from rcp.agents.herdr_bridge import (
+            HerdrNativeAdapter,
+            build_native_agent_args,
+            cleanup_isolated_codex_home,
+            isolated_codex_home,
+        )
         from rcp.agents.herdr_receipts import (
             claude_turn_receipt,
+            codex_transcript_inventory,
+            codex_turn_receipt,
             find_native_transcript,
+            find_new_codex_transcript,
         )
 
         if host:
@@ -1956,6 +1974,7 @@ class AgentLauncher:
         agent_started_at: float | None = None
         closed = False
         binding: dict[str, object] | None = None
+        native_home: Path | None = None
         try:
             if control is not None and control.pause_requested.is_set():
                 yield AgentEvent(event="paused", text="Paused before the Herdr agent started.")
@@ -1978,6 +1997,12 @@ class AgentLauncher:
                 },
                 "PATH": f"{Path(binary).parent}:{os.environ.get('PATH', '')}",
             }
+            if provider == "codex":
+                native_home = isolated_codex_home(cwd)
+                pane_env["CODEX_HOME"] = str(native_home)
+                if sys.platform.startswith("linux"):
+                    pane_env["TMPDIR"] = "/tmp"
+                previous_codex_transcripts = codex_transcript_inventory()
             agent = await adapter.start(
                 parent_pane_id=parent_pane_id,
                 cwd=cwd,
@@ -1989,8 +2014,7 @@ class AgentLauncher:
             agent_started_at = time.monotonic()
             hold.restart_minimum()
             native_id = session_id or fresh_claude_id
-            assert native_id is not None
-            transcript = find_native_transcript(provider, native_id, cwd)
+            transcript = find_native_transcript(provider, native_id, cwd) if native_id else None
             offset = transcript.stat().st_size if transcript is not None else 0
             process_identity = await adapter.process_info(agent)
             if not _native_binary_matches(process_identity.group_leader_pid, binary):
@@ -2006,8 +2030,11 @@ class AgentLauncher:
                 "runtime_id": runtime_id,
                 "stage_root": str(cwd),
             }
+            if provider == "codex":
+                binding["codex_home"] = pane_env["CODEX_HOME"]
             yield AgentEvent(event="herdr_binding_start", text=json.dumps(binding))
-            yield AgentEvent(event="session", session_id=native_id)
+            if native_id is not None:
+                yield AgentEvent(event="session", session_id=native_id)
             async with AsyncExitStack() as stack:
                 if invocation_gate is not None:
                     await stack.enter_async_context(
@@ -2026,7 +2053,8 @@ class AgentLauncher:
                 receipt = None
                 # The prompt API acknowledged delivery; a fast turn may be
                 # idle again before the first poll sees its working state.
-                saw_activity = True
+                saw_activity = provider != "codex"
+                prompted_at = time.monotonic()
                 settled_at = None
                 while receipt is None:
                     if control is not None and control.pause_requested.is_set():
@@ -2044,17 +2072,33 @@ class AgentLauncher:
                         settled_at = None
                     elif observation.state in {"idle", "done"} and saw_activity:
                         settled_at = settled_at or time.monotonic()
-                    if transcript is None:
+                    if provider == "codex" and native_id is None:
+                        native = find_new_codex_transcript(cwd, previous_codex_transcripts)
+                        if native is not None:
+                            native_id, transcript = native
+                            offset = 0
+                            saw_activity = True
+                            yield AgentEvent(event="session", session_id=native_id)
+                    if transcript is None and native_id is not None:
                         transcript = find_native_transcript(provider, native_id, cwd)
                     if transcript is not None:
-                        receipt = claude_turn_receipt(
+                        reader = codex_turn_receipt if provider == "codex" else claude_turn_receipt
+                        receipt = reader(
                             transcript, offset=offset, session_id=native_id, prompt=prompt
                         )
                         if transcript.stat().st_size > offset:
                             hold.release()
                     if receipt is not None:
                         break
-                    if settled_at is not None and time.monotonic() - settled_at > 5:
+                    if (
+                        not saw_activity
+                        and time.monotonic() - prompted_at
+                        > HERDR_NATIVE_PROMPT_START_TIMEOUT_SECONDS
+                    ):
+                        raise RuntimeError("Herdr did not start the Codex prompt in time.")
+                    if settled_at is not None and time.monotonic() - settled_at > (
+                        30 if provider == "codex" else 5
+                    ):
                         raise RuntimeError(
                             "Herdr became idle without a matching provider completion receipt."
                         )
@@ -2092,6 +2136,9 @@ class AgentLauncher:
                     if agent_started_at is not None:
                         await asyncio.sleep(remaining_startup_hold(agent_started_at))
                     await adapter.close(agent)
+                    closed = True
+            if native_home is not None and (agent is None or closed):
+                cleanup_isolated_codex_home(str(native_home))
 
     @staticmethod
     def _command(

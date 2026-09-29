@@ -668,12 +668,15 @@ class CodexProfile(ProviderProfile):
         "exec": legacy_runtime_id,
         "exec-json": legacy_runtime_id,
         "app-server": "codex.app-server-stdio.v1",
+        "herdr-native": "codex.herdr-native.v1",
         legacy_runtime_id: legacy_runtime_id,
         "codex.app-server-stdio.v1": "codex.app-server-stdio.v1",
+        "codex.herdr-native.v1": "codex.herdr-native.v1",
     }
     runtime_choices = (
         ProviderRuntimeChoice(id="exec", label="Codex exec"),
         ProviderRuntimeChoice(id="app-server", label="Codex app server"),
+        ProviderRuntimeChoice(id="herdr-native", label="Codex in Herdr (local preview)"),
     )
     work_like_minimum_version = (0, 138, 0)
 
@@ -686,6 +689,8 @@ class CodexProfile(ProviderProfile):
             from rcp.agents.codex_app_server import CodexAppServerRuntime
 
             return CodexAppServerRuntime()
+        if runtime_id == "codex.herdr-native.v1":
+            return _HerdrNativeRuntime(runtime_id)
         return super().runtime(runtime_id)
 
     def auth_command(self, binary: str) -> list[str]:
