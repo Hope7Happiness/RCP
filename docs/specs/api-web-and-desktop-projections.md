@@ -72,8 +72,9 @@ The personal-project provider-history routes list imported Codex sessions,
 return bounded message pages, and import or refresh one exact local native
 session by UUID. Import uses project write admission and verifies that the
 source is inside configured Codex roots and belongs to one local project
-repository. The Web Project Settings panel labels this as a read-only snapshot;
-its import and refresh controls never dispatch agent work or attach RCP
+repository. The Agents list counts these imports separately and opens a
+read-only message view with no composer. Project Settings offers the import
+control; refresh controls never dispatch agent work or attach RCP
 conversation authority. Team and remote-project imports are refused.
 
 One FastAPI backend serves the JSON API and, when built, the React/Vite

@@ -7,12 +7,18 @@ const PAGE_SIZE = 100;
 export function ProviderHistory({
   apiBase,
   writesDisabled = false,
+  sessionId: displayedSessionId,
+  onImported,
 }: {
   apiBase: string;
   writesDisabled?: boolean;
+  /** When set, render one selected session as a read-only Agents detail. */
+  sessionId?: string;
+  onImported?: (summary: ImportedHistorySummary) => void;
 }) {
+  const inAgents = displayedSessionId !== undefined;
   const [imports, setImports] = useState<ImportedHistorySummary[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(displayedSessionId ?? null);
   const [page, setPage] = useState<ImportedHistoryPage | null>(null);
   const [sessionId, setSessionId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,11 +28,13 @@ export function ProviderHistory({
     const loaded = await api<ImportedHistorySummary[]>(`${apiBase}/provider-history`);
     setImports(loaded);
     setSelected((current) =>
-      current && loaded.some((item) => item.session_id === current)
-        ? current
-        : (loaded[0]?.session_id ?? null),
+      inAgents
+        ? displayedSessionId
+        : current && loaded.some((item) => item.session_id === current)
+          ? current
+          : (loaded[0]?.session_id ?? null),
     );
-  }, [apiBase]);
+  }, [apiBase, displayedSessionId, inAgents]);
 
   const loadPage = useCallback(
     async (id: string, offset: number) => {
@@ -60,10 +68,11 @@ export function ProviderHistory({
     setBusy(true);
     setError(null);
     try {
-      await api<ImportedHistorySummary>(`${apiBase}/provider-history/codex`, {
+      const saved = await api<ImportedHistorySummary>(`${apiBase}/provider-history/codex`, {
         method: "POST",
         body: JSON.stringify({ session_id: id }),
       });
+      onImported?.(saved);
       await refreshList();
       setSelected(id);
       await loadPage(id, 0);
@@ -76,50 +85,58 @@ export function ProviderHistory({
   }
 
   return (
-    <section className="settings-section provider-history-settings">
+    <section
+      className={`settings-section provider-history-settings${inAgents ? " provider-history-agents" : ""}`}
+    >
       <header>
-        <h2>Imported Codex history</h2>
+        <h2>{inAgents ? "Imported Codex session" : "Imported Codex history"}</h2>
       </header>
       <p>
         A read-only snapshot of native Codex messages. These messages are not RCP task turns and
         grant no graph or file permissions. Refresh the snapshot to include later messages.
       </p>
-      <form
-        className="provider-history-import"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const id = sessionId.trim();
-          if (id) void importSession(id);
-        }}
-      >
-        <input
-          aria-label="Codex session ID"
-          placeholder="Codex session ID"
-          value={sessionId}
-          disabled={busy || writesDisabled}
-          onChange={(event) => setSessionId(event.target.value)}
-        />
-        <button
-          className="button compact"
-          type="submit"
-          disabled={busy || writesDisabled || !sessionId.trim()}
+      {!inAgents ? (
+        <form
+          className="provider-history-import"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const id = sessionId.trim();
+            if (id) void importSession(id);
+          }}
         >
-          Import session
-        </button>
-      </form>
+          <input
+            aria-label="Codex session ID"
+            placeholder="Codex session ID"
+            value={sessionId}
+            disabled={busy || writesDisabled}
+            onChange={(event) => setSessionId(event.target.value)}
+          />
+          <button
+            className="button compact"
+            type="submit"
+            disabled={busy || writesDisabled || !sessionId.trim()}
+          >
+            Import session
+          </button>
+        </form>
+      ) : null}
       {error ? <p role="alert">{error}</p> : null}
       {imports.length > 0 ? (
         <div className="provider-history-selection">
-          <label>
-            Session
-            <select value={selected ?? ""} onChange={(event) => setSelected(event.target.value)}>
-              {imports.map((item) => (
-                <option key={item.session_id} value={item.session_id}>
-                  {item.repository_alias} · {item.session_id}
-                </option>
-              ))}
-            </select>
-          </label>
+          {inAgents ? (
+            <strong>{selected}</strong>
+          ) : (
+            <label>
+              Session
+              <select value={selected ?? ""} onChange={(event) => setSelected(event.target.value)}>
+                {imports.map((item) => (
+                  <option key={item.session_id} value={item.session_id}>
+                    {item.repository_alias} · {item.session_id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             className="button secondary compact"
             type="button"
