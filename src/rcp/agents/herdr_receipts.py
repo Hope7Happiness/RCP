@@ -187,6 +187,8 @@ def codex_turn_receipt(
 
     started: str | None = None
     saw_prompt = False
+    saw_agent_instructions = False
+    saw_environment = False
     for record in _records(path, offset):
         payload = record.get("payload")
         if not isinstance(payload, dict):
@@ -202,11 +204,24 @@ def codex_turn_receipt(
             if payload.get("role") == "user":
                 text = _text_parts(payload.get("content"), "input_text")
                 if not saw_prompt:
-                    # The Codex TUI writes its own environment context as a
-                    # user-role item before the human's first message.
-                    if text.startswith("<environment_context>\n") and text.endswith(
-                        "\n</environment_context>"
+                    # On resume, Codex may write its own AGENTS.md and
+                    # environment context as user-role items before the prompt.
+                    if (
+                        started is not None
+                        and not saw_agent_instructions
+                        and not saw_environment
+                        and text.startswith("# AGENTS.md instructions\n\n<INSTRUCTIONS>\n")
+                        and text.endswith("\n</INSTRUCTIONS>")
                     ):
+                        saw_agent_instructions = True
+                        continue
+                    if (
+                        started is not None
+                        and not saw_environment
+                        and text.startswith("<environment_context>\n")
+                        and text.endswith("\n</environment_context>")
+                    ):
+                        saw_environment = True
                         continue
                     if text != prompt or started is None:
                         raise ValueError("Native Codex transcript did not start with RCP's prompt.")

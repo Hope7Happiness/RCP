@@ -95,6 +95,60 @@ def test_codex_tui_context_is_not_a_human_turn(tmp_path: Path) -> None:
     assert receipt is not None and receipt.answer == "Finished."
 
 
+def test_codex_resumed_turn_accepts_provider_instruction_preamble(tmp_path: Path) -> None:
+    transcript = tmp_path / "codex.jsonl"
+    _append(
+        transcript,
+        {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "# AGENTS.md instructions\n\n<INSTRUCTIONS>\n"
+                        "The previously provided AGENTS.md instructions no longer apply.\n"
+                        "</INSTRUCTIONS>",
+                    }
+                ],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "<environment_context>\n<cwd>/stage</cwd>\n</environment_context>",
+                    }
+                ],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "do work"}],
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "turn_id": "turn",
+                "last_agent_message": "Finished.",
+            },
+        },
+    )
+    receipt = codex_turn_receipt(transcript, offset=0, session_id="session", prompt="do work")
+    assert receipt is not None and receipt.answer == "Finished."
+
+
 def test_imported_codex_transcript_requires_original_cwd_and_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
