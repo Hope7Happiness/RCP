@@ -177,6 +177,37 @@ def test_codex_continuation_claim_is_exclusive_and_survives_restart(manifest, tm
     from rcp.storage import AppStore
 
     assert AppStore(store.path).codex_continuation(session_id) == initial
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-09-29T00:00:04Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "RCP turn after the handoff"},
+                        ],
+                    },
+                }
+            )
+            + "\n"
+        )
+    base = f"/api/projects/{project_id}/provider-history"
+    with TestClient(app) as client:
+        refreshed = client.post(f"{base}/codex", json={"session_id": session_id})
+        assert refreshed.json()["message_count"] == 3
+        assert refreshed.json()["continued_chat_id"] == first_chat
+        assert client.get(base).json()[0]["continued_chat_id"] == first_chat
+        context = client.get(f"{base}/codex/{session_id}?chat_id={first_chat}&limit=1")
+        assert context.status_code == 200, context.text
+        assert context.json()["message_count"] == 2
+        assert context.json()["offset"] == 1
+        assert [item["text"] for item in context.json()["messages"]] == ["Earlier answer"]
+        earlier = client.get(f"{base}/codex/{session_id}?chat_id={first_chat}&offset=0&limit=1")
+        assert earlier.json()["messages"][0]["text"] == "Earlier question"
+        assert client.get(f"{base}/codex/{session_id}?chat_id=other-chat").status_code == 404
     path.write_text(path.read_text().replace("Earlier answer", "Changed answer"), encoding="utf-8")
     with pytest.raises(ValueError, match="source prefix changed"):
         reprove_codex_history(manifest, store.provider_history(project_id, "codex", session_id))

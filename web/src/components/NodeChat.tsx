@@ -137,6 +137,7 @@ import {
 import { SkillPicker, useSkillPicker } from "./SkillPicker";
 import { RepositoryScope } from "./RepositoryScope";
 import { WorktreeControls, useConversationWorktree } from "./WorktreeControls";
+import { ImportedCodexContext } from "./ImportedCodexContext";
 
 interface Props {
   project: ProjectSnapshot;
@@ -151,6 +152,7 @@ interface Props {
   tasks: AgentTask[];
   watchers?: WatcherRecord[];
   historyMessages?: ChatMessage[];
+  importedSessionId?: string;
   chatId: string;
   presentation?: "floating" | "workspace";
   fixedConversation?: boolean;
@@ -469,6 +471,7 @@ export function NodeChat({
   tasks,
   watchers = EMPTY_WATCHERS,
   historyMessages = [],
+  importedSessionId,
   chatId,
   presentation = "floating",
   fixedConversation = false,
@@ -639,6 +642,10 @@ export function NodeChat({
   const dictationSpanRef = useRef<DictationSpan | null>(null);
   const dictationTimerRef = useRef<number | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const handleImportedContextLoaded = useCallback(() => {
+    const element = chatLinesRef.current;
+    if (element && shouldStickToBottomRef.current) element.scrollTop = element.scrollHeight;
+  }, []);
   const lastChatIdRef = useRef(chatId);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [repairingTaskId, setRepairingTaskId] = useState<string | null>(null);
@@ -1854,6 +1861,16 @@ export function NodeChat({
         onScroll={handleChatScroll}
         ref={chatLinesRef}
       >
+        {importedSessionId && (
+          <ImportedCodexContext
+            key={`${chatId}:${importedSessionId}`}
+            apiBase={`/api/projects/${encodeURIComponent(project.id)}`}
+            sessionId={importedSessionId}
+            chatId={chatId}
+            scrollContainerRef={chatLinesRef}
+            onInitialLoad={handleImportedContextLoaded}
+          />
+        )}
         {transcript.map((line) => {
           const messageId = line.lineId;
           const task = relatedTasks.find((candidate) => candidate.operation_id === line.taskId);

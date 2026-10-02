@@ -22,6 +22,14 @@ test("Agents shows imported history and can request a controlled Codex continuat
     page.on("requestfailed", (request) => errors.push(request.url()));
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const continuationRequests = [];
+    const contextRequests = [];
+    const contextMessages = Array.from({ length: 103 }, (_, index) => ({
+      message_id: `context-${index}`,
+      role: index % 2 ? "assistant" : "user",
+      phase: null,
+      timestamp: "2026-09-29T00:00:00Z",
+      text: index === 0 ? "Oldest imported question" : `Imported context message ${index}`,
+    }));
     let refreshed = false;
     const summary = {
       provider: "codex",
@@ -44,8 +52,24 @@ test("Agents shows imported history and can request a controlled Codex continuat
     await page.route("**/api/projects/project/provider-history/codex/*/source-status", (route) =>
       route.fulfill({ json: { source_bytes: 1030, imported_bytes: refreshed ? 1030 : 1024 } }),
     );
-    await page.route("**/api/projects/project/provider-history/codex/*", (route) =>
-      route.fulfill({
+    await page.route("**/api/projects/project/provider-history/codex/*", (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      if (params.has("chat_id")) {
+        contextRequests.push(Object.fromEntries(params));
+        const offset = Number(params.get("offset") ?? 3);
+        const limit = Number(params.get("limit") ?? 100);
+        return route.fulfill({
+          json: {
+            ...summary,
+            continued_chat_id: "continued-chat",
+            message_count: contextMessages.length,
+            offset,
+            limit,
+            messages: contextMessages.slice(offset, offset + limit),
+          },
+        });
+      }
+      return route.fulfill({
         json: {
           ...summary,
           message_count: refreshed ? 3 : 2,
@@ -79,8 +103,8 @@ test("Agents shows imported history and can request a controlled Codex continuat
               : []),
           ],
         },
-      }),
-    );
+      });
+    });
     await page.route("**/api/projects/project/provider-history/codex/*/continue", async (route) => {
       continuationRequests.push(route.request().postDataJSON());
       if (continuationRequests.length === 1) {
@@ -141,6 +165,41 @@ test("Agents shows imported history and can request a controlled Codex continuat
     await page.getByRole("radio", { name: /Work/ }).check();
     await page.getByRole("button", { name: "Continue session" }).click();
     await page.getByTestId("continued-chat").filter({ hasText: "continued-chat" }).waitFor();
+    const context = page.getByRole("region", { name: "Imported Codex context" });
+    await context.getByText("Imported context message 102", { exact: true }).waitFor();
+    await page.getByText("Latest RCP answer", { exact: true }).waitFor();
+    assert.equal(await context.locator("[data-provider-message-id]").count(), 100);
+    assert.equal(contextRequests[0].chat_id, "continued-chat");
+    assert.equal(
+      await page.locator(".node-chat-lines").evaluate((element) => {
+        const imported = element.querySelector(".imported-codex-context");
+        const latest = [...element.querySelectorAll(".node-chat-line")].find((line) =>
+          line.textContent.includes("Latest RCP answer"),
+        );
+        return !!(imported.compareDocumentPosition(latest) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }),
+      true,
+    );
+    const scroll = page.locator(".node-chat-lines");
+    await scroll.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    const before = await scroll.evaluate((element) => ({
+      top: element.scrollTop,
+      height: element.scrollHeight,
+    }));
+    await context.getByRole("button", { name: "Load earlier messages" }).click();
+    await context.getByText("Oldest imported question", { exact: true }).waitFor();
+    assert.equal(await context.locator("[data-provider-message-id]").count(), 103);
+    const after = await scroll.evaluate((element) => ({
+      top: element.scrollTop,
+      height: element.scrollHeight,
+    }));
+    assert.ok(Math.abs(after.top - before.top - (after.height - before.height)) <= 2);
+    assert.equal(
+      await page.getByRole("textbox", { name: "Message", exact: true }).isEnabled(),
+      true,
+    );
     assert.deepEqual(continuationRequests, [
       { message: "Next step", mode: "discuss" },
       { message: "Next step", mode: "work" },

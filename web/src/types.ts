@@ -2532,7 +2532,7 @@ export interface ChatSummaryPage {
   limit: number;
 }
 
-/** An explicitly imported native transcript, displayed outside RCP chats. */
+/** Imported provider messages, separate from canonical RCP task turns. */
 export interface ImportedHistorySummary {
   provider: "codex";
   session_id: string;
@@ -2543,6 +2543,7 @@ export interface ImportedHistorySummary {
   last_timestamp: string | null;
   imported_at: string;
   message_count: number;
+  continued_chat_id?: string | null;
 }
 
 export interface ImportedHistoryMessage {

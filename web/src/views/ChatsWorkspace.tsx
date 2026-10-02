@@ -232,12 +232,15 @@ export function ChatsWorkspace({
     null;
   const activeImportedSessionId =
     selectedImportedSessionId ?? (selected ? null : (importedSessions[0]?.session_id ?? null));
-  const activeImportedChatId = tasks.find(
-    (task) =>
-      task.native_session_id === activeImportedSessionId &&
-      task.kind === "project_chat" &&
-      !task.history_only,
-  )?.request.chat_id;
+  const activeImportedChatId =
+    importedSessions.find((item) => item.session_id === activeImportedSessionId)
+      ?.continued_chat_id ??
+    tasks.find(
+      (task) =>
+        task.native_session_id === activeImportedSessionId &&
+        task.kind === "project_chat" &&
+        !task.history_only,
+    )?.request.chat_id;
   const filterOptions: AgentFilter[] = ["all", "needs_you", "working"];
   if (importedSessions.length > 0) filterOptions.push("imported");
   if (archivedCount > 0 || showingArchived) filterOptions.push("archived");
@@ -826,6 +829,13 @@ export function ChatsWorkspace({
               )
             }
             onContinued={async (result) => {
+              setImportedSessions((current) =>
+                current.map((item) =>
+                  item.session_id === activeImportedSessionId
+                    ? { ...item, continued_chat_id: result.chat_id }
+                    : item,
+                ),
+              );
               setSelectedImportedSessionId(null);
               await onContinueImported(result);
             }}
@@ -849,6 +859,10 @@ export function ChatsWorkspace({
             tasks={tasks}
             watchers={watchers}
             historyMessages={chatTranscripts.get(selected.chatId)?.messages}
+            importedSessionId={
+              importedSessions.find((item) => item.continued_chat_id === selected.chatId)
+                ?.session_id
+            }
             chatId={selected.chatId}
             presentation="workspace"
             graphChangesDisabled={graphChangesDisabled}

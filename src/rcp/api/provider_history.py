@@ -73,7 +73,8 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
     } | {
         "message_count": len(record["messages"])
         if "messages" in record
-        else record["message_count"]
+        else record["message_count"],
+        "continued_chat_id": record.get("continued_chat_id"),
     }
 
 
@@ -92,13 +93,40 @@ def provider_history(
     *,
     catalog: CatalogDependency,
     store: StoreDependency,
-    offset: int = Query(default=0, ge=0),
+    offset: int | None = Query(default=None, ge=0),
     limit: int = Query(default=PROVIDER_HISTORY_PAGE_LIMIT, ge=1, le=PROVIDER_HISTORY_PAGE_LIMIT),
+    chat_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     project_id = catalog.resolve_project_id(project_id)
     record = store.provider_history(project_id, "codex", session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Imported Codex session not found")
+    claim = store.codex_continuation(session_id)
+    if chat_id is not None:
+        if claim is None or claim["project_id"] != project_id or claim["chat_id"] != chat_id:
+            raise HTTPException(status_code=404, detail="Imported Codex chat binding not found")
+        try:
+            context = read_codex_history(
+                catalog.open(project_id).manifest, session_id, prefix_bytes=claim["source_bytes"]
+            )
+            for key in (
+                "source_path_sha256",
+                "source_sha256",
+                "source_bytes",
+                "source_cwd",
+                "repository_alias",
+            ):
+                if context[key] != claim[key]:
+                    raise ValueError("The imported Codex context changed source identity")
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record = {**context, "imported_at": record["imported_at"]}
+        if offset is None:
+            offset = max(0, len(record["messages"]) - limit)
+    record["continued_chat_id"] = (
+        claim["chat_id"] if claim is not None and claim["project_id"] == project_id else None
+    )
+    offset = offset or 0
     return _summary(record) | {
         "offset": offset,
         "limit": limit,
@@ -158,6 +186,10 @@ def import_codex_history(
         )
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    claim = store.codex_continuation(body.session_id)
+    saved["continued_chat_id"] = (
+        claim["chat_id"] if claim is not None and claim["project_id"] == project_id else None
+    )
     return _summary(saved)
 
 

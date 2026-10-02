@@ -75,7 +75,9 @@ def _repository_alias(manifest: Manifest, cwd: str) -> str:
     return matches[0]
 
 
-def read_codex_history(manifest: Manifest, session_id: str) -> dict[str, Any]:
+def read_codex_history(
+    manifest: Manifest, session_id: str, *, prefix_bytes: int | None = None
+) -> dict[str, Any]:
     """Read one complete native-file prefix and retain only visible messages."""
 
     session_id = _canonical_session_id(session_id)
@@ -83,7 +85,13 @@ def read_codex_history(manifest: Manifest, session_id: str) -> dict[str, Any]:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or before.st_size > PROVIDER_HISTORY_SOURCE_MAX_BYTES:
+        source_bytes = before.st_size if prefix_bytes is None else prefix_bytes
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or source_bytes <= 0
+            or source_bytes > PROVIDER_HISTORY_SOURCE_MAX_BYTES
+            or before.st_size < source_bytes
+        ):
             raise ValueError("The Codex session file is unavailable or exceeds the import limit.")
         digest = hashlib.sha256()
         messages: list[dict[str, Any]] = []
@@ -93,7 +101,7 @@ def read_codex_history(manifest: Manifest, session_id: str) -> dict[str, Any]:
         with os.fdopen(descriptor, "rb") as source:
             descriptor = -1
             for line_number, line in enumerate(source, start=1):
-                if consumed + len(line) > before.st_size:
+                if consumed + len(line) > source_bytes:
                     break
                 if not line.endswith(b"\n"):
                     break
@@ -162,6 +170,8 @@ def read_codex_history(manifest: Manifest, session_id: str) -> dict[str, Any]:
             os.close(descriptor)
     if session_meta is None or session_meta.get("id") != session_id:
         raise ValueError("The Codex session identity does not match the requested id.")
+    if prefix_bytes is not None and consumed != prefix_bytes:
+        raise ValueError("The imported Codex source prefix is unavailable")
     if not messages:
         raise ValueError("The Codex session has no importable user or assistant messages.")
     source_cwd = session_meta.get("cwd")

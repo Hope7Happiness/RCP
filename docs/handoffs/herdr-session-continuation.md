@@ -14,15 +14,18 @@ the Agents composer. A durable exclusive claim binds the original transcript,
 repository, project, chat, first task, and execution machine. Ordinary task admission
 cannot bypass that handoff. A disposable end-to-end run proved the same native
 session could answer from prior context and later edit a file in Work.
+The continued chat shows the exact imported handoff prefix above its RCP turns
+in the same scroll area, with bounded pages and Load earlier messages.
 
 ## Remaining work
 
 - Define a user-facing way to enter a new RCP-authorized task from Herdr itself.
   The current inbound observation refreshes provider history only; direct
   Herdr prompts have no RCP task, mode, answer, or graph authority.
-- Decide how an RCP-owned chat presents externally entered messages alongside
-  canonical task turns without conflating their authority. The imported
-  history detail remains a separate projection for now.
+- Decide how an RCP-owned chat presents externally entered messages after
+  handoff alongside canonical task turns without conflating their authority.
+  The pre-handoff context is inline; later direct Herdr activity still appears
+  in the provider-history detail.
 - Complete a disposable interruption/restart/Stop exercise of an imported
   continuation while its Herdr pane is active. Focused tests cover durable
   claim idempotency, live-pane refusal, exact process binding, and task

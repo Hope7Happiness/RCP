@@ -88,6 +88,12 @@ returns the same task. The browser then opens the ordinary chat; its subsequent
 turns use the usual task route and permission controls. Team and remote-project
 imports or continuations are refused. The imported transcript remains labelled
 history, even when its native session is also owned by an RCP chat.
+Provider-history summaries carry the durable `continued_chat_id`, allowing a
+chat to find its imported context independently of task-list pagination.
+Reading a session with `chat_id` verifies that exact continuation binding and
+returns only the original, hash-verified handoff prefix. Without an offset it
+returns the last bounded page; explicit offsets page backward. Web renders
+these messages above the bound chat's ordinary turns, with one shared scroller.
 
 One FastAPI backend serves the JSON API and, when built, the React/Vite
 application. The optional Tauri shell starts or reuses that same backend. There

@@ -335,6 +335,29 @@
   font-size: var(--type-base);
   padding: 2px 3px 8px;
 }
+.imported-codex-context-heading {
+  align-items: center;
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--type-sm);
+  gap: 12px;
+  margin: 0 auto 24px;
+  max-width: 820px;
+  padding-bottom: 12px;
+}
+.imported-codex-context-heading button {
+  margin-left: auto;
+}
+.imported-codex-message-meta {
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--type-xs);
+  gap: 12px;
+  margin-bottom: 8px;
+}
 .node-chat-text {
   display: block;
 }

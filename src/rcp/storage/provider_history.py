@@ -276,10 +276,13 @@ class ProviderHistoryStoreMixin:
     def provider_histories(self, project_id: str) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT provider, session_id, source_sha256, source_bytes, repository_alias, "
-                "first_timestamp, last_timestamp, imported_at, messages_json "
-                "FROM provider_history_imports WHERE project_id = ? "
-                "ORDER BY imported_at DESC, session_id",
+                "SELECT i.provider, i.session_id, i.source_sha256, i.source_bytes, "
+                "i.repository_alias, i.first_timestamp, i.last_timestamp, i.imported_at, "
+                "i.messages_json, c.chat_id AS continued_chat_id "
+                "FROM provider_history_imports AS i LEFT JOIN codex_continuations AS c "
+                "ON i.provider = 'codex' AND c.native_session_id = i.session_id "
+                "AND c.project_id = i.project_id WHERE i.project_id = ? "
+                "ORDER BY i.imported_at DESC, i.session_id",
                 (project_id,),
             ).fetchall()
         return [
@@ -293,6 +296,7 @@ class ProviderHistoryStoreMixin:
                 "last_timestamp": row["last_timestamp"],
                 "imported_at": row["imported_at"],
                 "message_count": len(json.loads(row["messages_json"])),
+                "continued_chat_id": row["continued_chat_id"],
             }
             for row in rows
         ]

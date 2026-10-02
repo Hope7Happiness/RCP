@@ -61,12 +61,13 @@ function Fixture() {
   const [selected, setSelected] = useState(conversations[0].chatId);
   const [continued, setContinued] = useState("");
   const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [listedConversations, setListedConversations] = useState(conversations);
   return (
     <main style={{ height: "100vh" }}>
       <output data-testid="continued-chat">{continued}</output>
       <ChatsWorkspace
         project={project}
-        conversations={conversations}
+        conversations={listedConversations}
         selectedChatId={selected}
         nodes={{}}
         glossaryIndex={buildGlossaryIndex({})}
@@ -91,15 +92,43 @@ function Fixture() {
         onRepairGraphUpdate={async () => {}}
         onContinueImported={(result) => {
           setContinued(result.chat_id);
-          setTasks([
+          const timestamp = new Date().toISOString();
+          const task = {
+            ...result.task,
+            native_session_id: "11111111-1111-4111-8111-111111111111",
+            kind: "project_chat",
+            history_only: false,
+            status: "succeeded",
+            status_label: "Succeeded",
+            settled: true,
+            active: false,
+            created_at: timestamp,
+            updated_at: timestamp,
+            request: {
+              chat_id: result.chat_id,
+              chat_scope: "project",
+              run_truth_scope: ["repo"],
+              provider: "codex",
+              run_on: "local",
+              mode: "work",
+              trigger: "human",
+              message: "Next step",
+            },
+            result: { messages: ["Latest RCP answer"] },
+          } as AgentTask;
+          setTasks([task]);
+          setListedConversations([
+            ...conversations,
             {
-              ...result.task,
-              native_session_id: "11111111-1111-4111-8111-111111111111",
+              chatId: result.chat_id,
+              title: "Continued Codex chat",
               kind: "project_chat",
-              history_only: false,
-              request: { chat_id: result.chat_id, run_truth_scope: ["repo"] },
-            } as AgentTask,
+              nodeId: null,
+              tasks: [task],
+              updatedAt: timestamp,
+            },
           ]);
+          setSelected(result.chat_id);
         }}
         onNewSession={() => {}}
       />

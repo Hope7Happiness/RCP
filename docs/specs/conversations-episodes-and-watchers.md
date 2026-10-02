@@ -61,7 +61,13 @@ the same native session id and current RCP permission profile. A live old pane
 returns a conflict naming that pane; RCP never injects a Work prompt into it.
 The first task and chat binding survive restart and duplicate dispatch. Later
 turns use the ordinary chat composer and remain pinned to the original
-repository. Direct Herdr messages still appear only as provider history, not
+repository. The bound chat displays imported Codex context directly above its
+RCP turns in the same scroll area. This context is the exact imported native-file
+prefix bound at handoff, so later RCP prompts and replies are not duplicated. It
+opens with the most recent 100 earlier messages; Load earlier messages prepends
+older pages while preserving the reader's scroll position. The imported block
+keeps its provider-history label and has no task or graph controls.
+Direct Herdr messages still appear only as provider history, not
 as RCP task turns. A separate RCP turn never consumes displayed history text
 as task authority; the provider's own native session retains its context.
 
