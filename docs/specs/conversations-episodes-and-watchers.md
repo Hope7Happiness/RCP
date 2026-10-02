@@ -67,6 +67,13 @@ prefix bound at handoff, so later RCP prompts and replies are not duplicated. It
 opens with the most recent 100 earlier messages; Load earlier messages prepends
 older pages while preserving the reader's scroll position. The imported block
 keeps its provider-history label and has no task or graph controls.
+Both history views omit complete Codex-injected environment and AGENTS instruction
+records from the displayed messages; the stored snapshot and source receipts stay
+intact. Human messages quoting those blocks and assistant replies remain visible.
+Once a later turn successfully settles in the same chat and native session, the
+earlier source-identity handoff diagnostic is hidden in the chat transcript. Its
+failed task and error remain available in task details; unresolved errors stay
+visible.
 Direct Herdr messages still appear only as provider history, not
 as RCP task turns. A separate RCP turn never consumes displayed history text
 as task authority; the provider's own native session retains its context.

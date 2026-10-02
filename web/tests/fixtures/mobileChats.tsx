@@ -116,7 +116,18 @@ function Fixture() {
             },
             result: { messages: ["Latest RCP answer"] },
           } as AgentTask;
-          setTasks([task]);
+          const failed = {
+            ...task,
+            operation_id: "old-handoff-failure",
+            created_at: new Date(Date.parse(timestamp) - 60_000).toISOString(),
+            status: "failed",
+            settled: false,
+            failed: true,
+            finished: true,
+            error: "The continued native transcript changed source identity.",
+            result: null,
+          } as AgentTask;
+          setTasks([failed, task]);
           setListedConversations([
             ...conversations,
             {

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { api } from "../api";
 import { MarkdownAnswer } from "../chatMarkdown";
+import { isInjectedCodexContext } from "../providerHistoryPresentation";
 import type { ImportedHistoryPage } from "../types";
 
 const PAGE_SIZE = 100;
@@ -74,11 +75,12 @@ export function ImportedCodexContext({
     }
   }
 
+  const messages = page?.messages.filter((message) => !isInjectedCodexContext(message)) ?? [];
   return (
     <section className="imported-codex-context" aria-label="Imported Codex context">
       <header className="imported-codex-context-heading">
         <strong>Imported Codex context</strong>
-        {page && <span>{page.message_count} earlier messages</span>}
+        {page && <span>{messages.length} messages shown</span>}
         {page && page.offset > 0 && (
           <button
             className="button secondary compact"
@@ -100,7 +102,7 @@ export function ImportedCodexContext({
           Imported context unavailable: {error}
         </p>
       )}
-      {page?.messages.map((message) => (
+      {messages.map((message) => (
         <article
           className={`node-chat-line ${message.role === "user" ? "human" : "agent"}`}
           data-provider-message-id={message.message_id}

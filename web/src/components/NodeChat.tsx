@@ -1,4 +1,5 @@
 import { useHiddenWatchers } from "../hooks/useHiddenWatchers";
+import { hideResolvedCodexHandoffErrors } from "../providerHistoryPresentation";
 import { ExternalJobRow } from "./ExternalJobRow";
 import {
   AlertTriangle,
@@ -518,24 +519,29 @@ export function NodeChat({
   const [pendingTurn, setPendingTurn] = useState<PendingChatTurn | null>(null);
   const transcript = useMemo(
     () =>
-      orderTranscriptLines([
-        ...reconcileChatHistoryArtifacts(displayedMessages, relatedTasks),
-        ...reconstructTaskTranscript(chatTasksMissingFromHistory(relatedTasks, displayedMessages)),
-        ...(pendingTurn
-          ? [
-              {
-                lineId: `pending:${pendingTurn.clientId}`,
-                role: "human" as const,
-                text: pendingTurn.text,
-                taskId: pendingTurn.clientId,
-                timestamp: pendingTurn.timestamp,
-                mode: pendingTurn.mode,
-                attachments: pendingTurn.attachments,
-                trigger: "human" as const,
-              },
-            ]
-          : []),
-      ]),
+      hideResolvedCodexHandoffErrors(
+        orderTranscriptLines([
+          ...reconcileChatHistoryArtifacts(displayedMessages, relatedTasks),
+          ...reconstructTaskTranscript(
+            chatTasksMissingFromHistory(relatedTasks, displayedMessages),
+          ),
+          ...(pendingTurn
+            ? [
+                {
+                  lineId: `pending:${pendingTurn.clientId}`,
+                  role: "human" as const,
+                  text: pendingTurn.text,
+                  taskId: pendingTurn.clientId,
+                  timestamp: pendingTurn.timestamp,
+                  mode: pendingTurn.mode,
+                  attachments: pendingTurn.attachments,
+                  trigger: "human" as const,
+                },
+              ]
+            : []),
+        ]),
+        relatedTasks,
+      ),
     [displayedMessages, pendingTurn, relatedTasks],
   );
   const config = useMemo(

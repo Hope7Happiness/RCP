@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { isInjectedCodexContext } from "../providerHistoryPresentation";
 import type { AgentTask, ImportedHistoryPage, ImportedHistorySummary } from "../types";
 
 const PAGE_SIZE = 100;
@@ -331,18 +332,20 @@ export function ProviderHistory({
               Next
             </button>
           </div>
-          {page.messages.map((message) => (
-            <article className="provider-history-message" key={message.message_id}>
-              <header>
-                <strong>{message.role === "user" ? "Codex user" : "Codex assistant"}</strong>
-                {message.phase ? (
-                  <span>{message.phase === "final_answer" ? "Final answer" : "Commentary"}</span>
-                ) : null}
-                <time dateTime={message.timestamp}>{message.timestamp}</time>
-              </header>
-              <pre>{message.text}</pre>
-            </article>
-          ))}
+          {page.messages
+            .filter((message) => !isInjectedCodexContext(message))
+            .map((message) => (
+              <article className="provider-history-message" key={message.message_id}>
+                <header>
+                  <strong>{message.role === "user" ? "Codex user" : "Codex assistant"}</strong>
+                  {message.phase ? (
+                    <span>{message.phase === "final_answer" ? "Final answer" : "Commentary"}</span>
+                  ) : null}
+                  <time dateTime={message.timestamp}>{message.timestamp}</time>
+                </header>
+                <pre>{message.text}</pre>
+              </article>
+            ))}
         </div>
       ) : null}
     </section>

@@ -30,6 +30,11 @@ test("Agents shows imported history and can request a controlled Codex continuat
       timestamp: "2026-09-29T00:00:00Z",
       text: index === 0 ? "Oldest imported question" : `Imported context message ${index}`,
     }));
+    contextMessages[5].role = "user";
+    contextMessages[5].text =
+      "<environment_context>\n<cwd>/example/repo</cwd>\n</environment_context>";
+    contextMessages[6].text =
+      "# AGENTS.md instructions for /example/repo\n<INSTRUCTIONS>Injected guidance</INSTRUCTIONS>";
     let refreshed = false;
     const summary = {
       provider: "codex",
@@ -76,6 +81,8 @@ test("Agents shows imported history and can request a controlled Codex continuat
           offset: 0,
           limit: 100,
           messages: [
+            contextMessages[5],
+            contextMessages[6],
             {
               message_id: "one",
               role: "user",
@@ -168,7 +175,14 @@ test("Agents shows imported history and can request a controlled Codex continuat
     const context = page.getByRole("region", { name: "Imported Codex context" });
     await context.getByText("Imported context message 102", { exact: true }).waitFor();
     await page.getByText("Latest RCP answer", { exact: true }).waitFor();
-    assert.equal(await context.locator("[data-provider-message-id]").count(), 100);
+    assert.equal(await context.locator("[data-provider-message-id]").count(), 98);
+    assert.equal(await context.getByText(/environment_context|Injected guidance/).count(), 0);
+    assert.equal(
+      await page
+        .getByText("The continued native transcript changed source identity.", { exact: true })
+        .count(),
+      0,
+    );
     assert.equal(contextRequests[0].chat_id, "continued-chat");
     assert.equal(
       await page.locator(".node-chat-lines").evaluate((element) => {
@@ -181,16 +195,16 @@ test("Agents shows imported history and can request a controlled Codex continuat
       true,
     );
     const scroll = page.locator(".node-chat-lines");
-    await scroll.evaluate((element) => {
-      element.scrollTop = 0;
-    });
+    await scroll.hover();
+    await page.mouse.wheel(0, -20000);
+    await page.waitForFunction(() => document.querySelector(".node-chat-lines").scrollTop === 0);
     const before = await scroll.evaluate((element) => ({
       top: element.scrollTop,
       height: element.scrollHeight,
     }));
     await context.getByRole("button", { name: "Load earlier messages" }).click();
     await context.getByText("Oldest imported question", { exact: true }).waitFor();
-    assert.equal(await context.locator("[data-provider-message-id]").count(), 103);
+    assert.equal(await context.locator("[data-provider-message-id]").count(), 101);
     const after = await scroll.evaluate((element) => ({
       top: element.scrollTop,
       height: element.scrollHeight,
